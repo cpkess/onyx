@@ -1,0 +1,313 @@
+@import "tailwindcss";
+
+/* Enable class-based dark mode: <html class="dark"> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --onyx-accent: #7c6cff;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  overflow: hidden;
+}
+
+/* ---- CodeMirror integration ---- */
+.cm-editor {
+  height: 100%;
+  font-size: 16px;
+  /* Read like a document: proportional body font, monospace only for code. */
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Helvetica, Arial, sans-serif;
+}
+.cm-editor .cm-scroller {
+  line-height: 1.7;
+  padding: 1.5rem 0 6rem;
+  font-family: inherit;
+}
+/* Center content at a readable measure. */
+.cm-editor .cm-content {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0 2rem;
+  caret-color: var(--onyx-accent);
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+
+/* ---- Live-preview decoration styles ---- */
+.tok-h1 {
+  font-size: 1.9em;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.tok-h2 {
+  font-size: 1.5em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.tok-h3 {
+  font-size: 1.25em;
+  font-weight: 600;
+}
+.tok-code {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.tok-wikilink {
+  color: var(--onyx-accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tok-wikilink-missing {
+  color: #e06c75;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.tok-tag {
+  color: #56b6c2;
+  background: color-mix(in srgb, #56b6c2 16%, transparent);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 0.9em;
+}
+.tok-highlight {
+  background: color-mix(in srgb, #ffd54a 45%, transparent);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.dark .tok-highlight {
+  background: color-mix(in srgb, #ffd54a 30%, transparent);
+  color: inherit;
+}
+
+/* Links rendered inside widgets (callouts, embeds, tables). */
+.onyx-rendered a,
+.tok-wikilink {
+  cursor: pointer;
+}
+
+/* ---- Block widgets ---- */
+.onyx-rendered {
+  font-family: inherit;
+}
+
+/* Callouts */
+.onyx-callout {
+  border: 1px solid color-mix(in srgb, var(--callout, #7c6cff) 35%, transparent);
+  border-left: 3px solid var(--callout, #7c6cff);
+  background: color-mix(in srgb, var(--callout, #7c6cff) 8%, transparent);
+  border-radius: 6px;
+  padding: 0.6em 0.9em;
+  margin: 0.4em 0;
+}
+.onyx-callout-title {
+  font-weight: 700;
+  color: var(--callout, #7c6cff);
+}
+.onyx-callout-body {
+  margin-top: 0.35em;
+}
+.onyx-callout-body :first-child {
+  margin-top: 0;
+}
+.onyx-callout-body :last-child {
+  margin-bottom: 0;
+}
+.onyx-callout-note,
+.onyx-callout-info {
+  --callout: #4c8dff;
+}
+.onyx-callout-tip,
+.onyx-callout-hint,
+.onyx-callout-success,
+.onyx-callout-check {
+  --callout: #2ecc71;
+}
+.onyx-callout-warning,
+.onyx-callout-caution,
+.onyx-callout-attention,
+.onyx-callout-important {
+  --callout: #e0a800;
+}
+.onyx-callout-danger,
+.onyx-callout-error,
+.onyx-callout-failure,
+.onyx-callout-bug {
+  --callout: #e0524c;
+}
+.onyx-callout-question,
+.onyx-callout-faq,
+.onyx-callout-example {
+  --callout: #9b6cff;
+}
+.onyx-callout-quote {
+  --callout: #888;
+}
+
+/* Blockquotes */
+.cm-line.cm-blockquote {
+  border-left: 3px solid color-mix(in srgb, currentColor 25%, transparent);
+  padding-left: 0.9em;
+  color: color-mix(in srgb, currentColor 80%, transparent);
+}
+
+/* Horizontal rule */
+.onyx-hr hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  margin: 0.4em 0;
+}
+
+/* List bullets */
+.onyx-bullet {
+  color: var(--onyx-accent);
+}
+
+/* Task checkboxes */
+.onyx-checkbox input {
+  cursor: pointer;
+  vertical-align: middle;
+  accent-color: var(--onyx-accent);
+  margin: 0 0.15em 0 0;
+}
+
+/* Tables */
+.onyx-table {
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+.onyx-table table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.onyx-table th,
+.onyx-table td {
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.onyx-table th {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  font-weight: 700;
+}
+
+/* Code blocks */
+.cm-line.cm-codeblock {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.onyx-codeheader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 6px 6px 0 0;
+  padding: 0.15em 0.6em;
+  font-size: 0.75em;
+}
+.onyx-codeheader-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+.onyx-codeheader-copy {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.7;
+}
+.onyx-codeheader-copy:hover {
+  opacity: 1;
+}
+
+/* Footnotes */
+.onyx-footnote-ref,
+.tok-footnote-ref {
+  color: var(--onyx-accent);
+  font-size: 0.75em;
+  cursor: pointer;
+}
+
+/* Math & diagrams */
+.onyx-math-block {
+  text-align: center;
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+.onyx-mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 0.5em 0;
+}
+.onyx-mermaid-error {
+  color: #e0524c;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
+
+/* Images */
+.onyx-image {
+  max-width: 100%;
+  border-radius: 6px;
+  vertical-align: middle;
+}
+
+/* Embeds / transclusion */
+.onyx-embed {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-left: 3px solid var(--onyx-accent);
+  border-radius: 6px;
+  padding: 0.5em 0.9em;
+  margin: 0.4em 0;
+}
+.onyx-embed-title {
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-bottom: 0.3em;
+}
+.onyx-embed-body :first-child {
+  margin-top: 0;
+}
+.onyx-embed-body :last-child {
+  margin-bottom: 0;
+}
+
+/* Frontmatter properties */
+.onyx-props {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 6px;
+  padding: 0.5em 0.7em;
+  margin: 0.2em 0 0.6em;
+  font-size: 0.9em;
+}
+.onyx-prop {
+  display: flex;
+  gap: 0.6em;
+  padding: 0.12em 0;
+}
+.onyx-prop-key {
+  min-width: 8rem;
+  font-weight: 600;
+  opacity: 0.65;
+}
+
+/* Thin scrollbars to match a notes app. */
+* {
+  scrollbar-width: thin;
+}
