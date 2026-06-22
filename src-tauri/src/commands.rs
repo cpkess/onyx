@@ -181,6 +181,50 @@ pub fn resolve_asset(
     })
 }
 
+/// Read a per-vault metadata file from `<vault>/.onyx/<name>` (e.g. workspace,
+/// bookmarks). Returns None if absent.
+#[tauri::command]
+pub fn read_vault_meta(state: State<AppState>, name: String) -> Result<Option<String>, String> {
+    with_vault(&state, |ctx| {
+        let safe = name.replace(['/', '\\'], "_");
+        Ok(std::fs::read_to_string(ctx.root.join(".onyx").join(safe)).ok())
+    })
+}
+
+/// Write a per-vault metadata file under `<vault>/.onyx/`.
+#[tauri::command]
+pub fn write_vault_meta(state: State<AppState>, name: String, content: String) -> Result<(), String> {
+    with_vault(&state, |ctx| {
+        let dir = ctx.root.join(".onyx");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let safe = name.replace(['/', '\\'], "_");
+        std::fs::write(dir.join(safe), content).map_err(|e| e.to_string())
+    })
+}
+
+/// Save pasted/dropped binary data into the vault's `attachments/` folder.
+/// Returns the attachment's filename (for an `![[name]]` embed).
+#[tauri::command]
+pub fn save_attachment(
+    state: State<AppState>,
+    name: String,
+    data: Vec<u8>,
+    folder: Option<String>,
+) -> Result<String, String> {
+    with_vault(&state, |ctx| {
+        let folder = folder.filter(|f| !f.trim().is_empty()).unwrap_or_else(|| "attachments".into());
+        let dir = ctx.root.join(folder.trim_matches('/'));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let ext = std::path::Path::new(&name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("png");
+        let fname = format!("pasted-{}.{ext}", now_secs());
+        std::fs::write(dir.join(&fname), &data).map_err(|e| e.to_string())?;
+        Ok(fname)
+    })
+}
+
 /// Create a folder (and any missing parents) under the vault.
 #[tauri::command]
 pub fn create_folder(state: State<AppState>, path: String) -> Result<String, String> {
@@ -193,6 +237,70 @@ pub fn create_folder(state: State<AppState>, path: String) -> Result<String, Str
         std::fs::create_dir_all(&abs).map_err(|e| e.to_string())?;
         Ok(rel)
     })
+}
+
+/// Rename (or move) a note, rewriting every `[[wikilink]]`/`![[embed]]` that
+/// points to it across the vault. Returns the new relative path.
+#[tauri::command]
+pub fn rename_path(state: State<AppState>, old: String, new: String) -> Result<String, String> {
+    let mut guard = state.vault.lock().unwrap();
+    let ctx = guard.as_mut().ok_or("No vault is open")?;
+    let root = ctx.root.clone();
+
+    let old_rel = old.trim().trim_matches('/').to_string();
+    if old_rel.is_empty() {
+        return Err("Nothing to rename".into());
+    }
+    let mut new_rel = new.trim().trim_matches('/').to_string();
+    if new_rel.is_empty() {
+        return Err("New name is empty".into());
+    }
+    if old_rel.to_lowercase().ends_with(".md") && !new_rel.to_lowercase().ends_with(".md") {
+        new_rel.push_str(".md");
+    }
+    if new_rel == old_rel {
+        return Ok(old_rel);
+    }
+
+    let old_abs = vault::resolve(&root, &old_rel)?;
+    let new_abs = vault::resolve(&root, &new_rel)?;
+    if !old_abs.exists() {
+        return Err("Source no longer exists".into());
+    }
+    if new_abs.exists() {
+        return Err(format!("“{new_rel}” already exists"));
+    }
+    if let Some(parent) = new_abs.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&old_abs, &new_abs).map_err(|e| e.to_string())?;
+
+    // Rewrite links across the vault when the note's name (stem) changes.
+    let old_name = index::note_name(&old_rel);
+    let new_name = index::note_name(&new_rel);
+    if old_name != new_name {
+        for entry in walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if p.components().any(|c| c.as_os_str() == ".onyx") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(p) {
+                let (out, n) = index::rewrite_wikilinks(&content, &old_name, &new_name);
+                if n > 0 {
+                    let _ = std::fs::write(p, out);
+                }
+            }
+        }
+    }
+
+    index::reindex_all(&mut ctx.conn, &root).map_err(|e| e.to_string())?;
+    Ok(new_rel)
 }
 
 /// Move a note or folder into `dest_dir` (vault-relative; "" = vault root).
@@ -310,23 +418,49 @@ pub fn reindex(state: State<AppState>) -> Result<usize, String> {
     index::reindex_all(&mut ctx.conn, &root).map_err(|e| e.to_string())
 }
 
-/// Resolve a wikilink target name to an existing note path, if any.
+/// Resolve a wikilink target name (file stem or alias) to a note path, if any.
 #[tauri::command]
 pub fn resolve_link(state: State<AppState>, name: String) -> Result<Option<String>, String> {
     with_vault(&state, |ctx| {
-        let target = name.to_lowercase();
-        let mut stmt = ctx
-            .conn
-            .prepare("SELECT path FROM notes")
-            .map_err(|e| e.to_string())?;
-        let paths: Vec<String> = stmt
-            .query_map([], |r| r.get::<_, String>(0))
+        index::resolve_name(&ctx.conn, &name).map_err(|e| e.to_string())
+    })
+}
+
+/// All tags with note counts (most-used first).
+#[tauri::command]
+pub fn get_tags(state: State<AppState>) -> Result<Vec<(String, i64)>, String> {
+    with_vault(&state, |ctx| index::tags(&ctx.conn).map_err(|e| e.to_string()))
+}
+
+/// Note paths carrying a given tag.
+#[tauri::command]
+pub fn get_notes_by_tag(state: State<AppState>, tag: String) -> Result<Vec<String>, String> {
+    with_vault(&state, |ctx| {
+        index::notes_by_tag(&ctx.conn, &tag).map_err(|e| e.to_string())
+    })
+}
+
+/// Notes that mention `name` in their text but don't link to it (unlinked mentions).
+#[tauri::command]
+pub fn get_unlinked_mentions(
+    state: State<AppState>,
+    name: String,
+) -> Result<Vec<SearchResult>, String> {
+    with_vault(&state, |ctx| {
+        let hits = index::search(&ctx.conn, &name).map_err(|e| e.to_string())?;
+        let linked: HashSet<String> = index::backlinks(&ctx.conn, &name)
             .map_err(|e| e.to_string())?
-            .filter_map(|r| r.ok())
-            .collect();
-        Ok(paths
             .into_iter()
-            .find(|p| index::note_name(p).to_lowercase() == target))
+            .map(|b| b.path)
+            .collect();
+        let lname = name.to_lowercase();
+        Ok(hits
+            .into_iter()
+            .filter(|r| {
+                index::note_name(&r.path).to_lowercase() != lname && !linked.contains(&r.path)
+            })
+            .take(30)
+            .collect())
     })
 }
 

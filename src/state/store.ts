@@ -1,15 +1,47 @@
 import { create } from "zustand";
 import { api, pickVaultFolder, type TreeNode, type VaultInfo } from "../lib/api";
+import type { EditorMode } from "../editor/render/core";
+import {
+  type Settings,
+  defaultSettings,
+  applyAppearance,
+  formatDate,
+  substituteTemplate,
+} from "../settings";
+import { setHotkeyOverrides } from "../commands/registry";
+import {
+  type Pane,
+  type Workspace,
+  activePane,
+  closeInPane,
+  closePane,
+  emptyWorkspace,
+  moveTab,
+  openInPane,
+  removePathEverywhere,
+  remapPaths,
+  setActiveInPane,
+  splitPane,
+} from "./workspace";
 
 type Theme = "dark" | "light";
+export type PaletteMode = "files" | "commands" | "semantic";
 
 interface AppStore {
   vault: VaultInfo | null;
   tree: TreeNode[];
-  tabs: string[]; // open note paths
-  activeTab: string | null;
+  panes: Pane[];
+  activePaneId: string;
+  activeTab: string | null; // synced: the active pane's active tab
+  recent: string[];
   theme: Theme;
   paletteOpen: boolean;
+  paletteMode: PaletteMode;
+  noteModes: Record<string, EditorMode>;
+  editorStats: { words: number; chars: number } | null;
+  settings: Settings;
+  bookmarks: string[];
+  templatePickerOpen: boolean;
   graphOpen: boolean;
   settingsOpen: boolean;
   chatOpen: boolean;
@@ -20,22 +52,41 @@ interface AppStore {
   chooseVault: () => Promise<void>;
   openVaultPath: (path: string) => Promise<void>;
   refreshTree: () => Promise<void>;
+  // Pane / tab actions
   openNote: (path: string) => void;
+  openNoteInPane: (paneId: string, path: string) => void;
   closeTab: (path: string) => void;
+  closeTabInPane: (paneId: string, path: string) => void;
   setActive: (path: string) => void;
+  setActiveInPane: (paneId: string, path: string) => void;
+  setActivePane: (paneId: string) => void;
+  splitActivePane: () => void;
+  closePane: (paneId: string) => void;
+  moveTabToPane: (path: string, from: string, to: string) => void;
   createAndOpen: (path: string) => Promise<void>;
   createFolder: (path: string) => Promise<void>;
   movePath: (src: string, destDir: string) => Promise<void>;
+  renamePath: (oldPath: string, newPath: string) => Promise<void>;
+  deleteNote: (path: string) => Promise<void>;
   toggleTheme: () => void;
   setPaletteOpen: (open: boolean) => void;
+  openPalette: (mode: PaletteMode) => void;
+  setNoteMode: (path: string, mode: EditorMode) => void;
+  cycleNoteMode: (path: string) => void;
+  setEditorStats: (stats: { words: number; chars: number } | null) => void;
+  setSettings: (partial: Partial<Settings>) => void;
+  toggleBookmark: (path: string) => void;
+  newNote: () => Promise<void>;
+  openDailyNote: () => Promise<void>;
+  setTemplatePickerOpen: (open: boolean) => void;
   setGraphOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setChatOpen: (open: boolean) => void;
   setAiToolsOpen: (open: boolean) => void;
 }
 
-// Module-level guard so the vault is auto-opened at most once per session.
 let vaultInitStarted = false;
+let persistTimer: number | undefined;
 
 function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark");
@@ -44,138 +95,294 @@ function applyTheme(theme: Theme) {
 const initialTheme: Theme =
   (localStorage.getItem("onyx-theme") as Theme | null) ?? "dark";
 applyTheme(initialTheme);
+applyAppearance(defaultSettings);
 
-export const useStore = create<AppStore>((set, get) => ({
-  vault: null,
-  tree: [],
-  tabs: [],
-  activeTab: null,
-  theme: initialTheme,
-  paletteOpen: false,
-  graphOpen: false,
-  settingsOpen: false,
-  chatOpen: false,
-  aiToolsOpen: false,
-  loading: false,
+export const useStore = create<AppStore>((set, get) => {
+  const ws = (): Workspace => ({ panes: get().panes, activePaneId: get().activePaneId });
 
-  initVault: async () => {
-    // Guard against repeated invocation (StrictMode / re-renders): only the
-    // first call ever opens the last vault.
-    if (vaultInitStarted) return;
-    vaultInitStarted = true;
-    const last = await api.getLastVault();
-    if (last) {
-      await get().openVaultPath(last);
-    }
-  },
+  const schedulePersist = () => {
+    window.clearTimeout(persistTimer);
+    persistTimer = window.setTimeout(() => {
+      const { vault, panes, activePaneId, noteModes, recent } = get();
+      if (!vault) return;
+      api
+        .writeVaultMeta(
+          "workspace.json",
+          JSON.stringify({ panes, activePaneId, noteModes, recent })
+        )
+        .catch(() => {});
+    }, 500);
+  };
 
-  chooseVault: async () => {
-    const path = await pickVaultFolder();
-    if (path) await get().openVaultPath(path);
-  },
-
-  openVaultPath: async (path: string) => {
-    set({ loading: true });
-    try {
-      const vault = await api.openVault(path);
-      set({
-        vault,
-        tree: vault.tree,
-        tabs: [],
-        activeTab: null,
-      });
-    } catch (e) {
-      console.error("Failed to open vault:", e);
-      alert(`Failed to open vault: ${e}`);
-    } finally {
-      set({ loading: false });
-    }
-  },
-
-  refreshTree: async () => {
-    if (!get().vault) return;
-    try {
-      const tree = await api.getTree();
-      set({ tree });
-    } catch (e) {
-      console.error("refreshTree failed", e);
-    }
-  },
-
-  openNote: (path: string) => {
-    const { tabs } = get();
+  // Apply a new workspace and keep the synced activeTab; persist (debounced).
+  const commit = (next: Workspace, persist = true) => {
     set({
-      tabs: tabs.includes(path) ? tabs : [...tabs, path],
-      activeTab: path,
+      panes: next.panes,
+      activePaneId: next.activePaneId,
+      activeTab: activePane(next).activeTab,
     });
-  },
+    if (persist) schedulePersist();
+  };
 
-  closeTab: (path: string) => {
-    const { tabs, activeTab } = get();
-    const idx = tabs.indexOf(path);
-    const next = tabs.filter((t) => t !== path);
-    let newActive = activeTab;
-    if (activeTab === path) {
-      newActive = next[Math.min(idx, next.length - 1)] ?? null;
-    }
-    set({ tabs: next, activeTab: newActive });
-  },
+  const pushRecent = (path: string) => {
+    set((s) => ({ recent: [path, ...s.recent.filter((p) => p !== path)].slice(0, 30) }));
+  };
 
-  setActive: (path: string) => set({ activeTab: path }),
+  const empty = emptyWorkspace();
 
-  createAndOpen: async (path: string) => {
-    try {
-      const rel = await api.createNote(path);
-      await get().refreshTree();
-      get().openNote(rel);
-    } catch (e) {
-      console.error("createNote failed", e);
-      alert(`Failed to create note: ${e}`);
-    }
-  },
+  return {
+    vault: null,
+    tree: [],
+    panes: empty.panes,
+    activePaneId: empty.activePaneId,
+    activeTab: null,
+    recent: [],
+    theme: initialTheme,
+    paletteOpen: false,
+    paletteMode: "files",
+    noteModes: {},
+    editorStats: null,
+    settings: defaultSettings,
+    bookmarks: [],
+    templatePickerOpen: false,
+    graphOpen: false,
+    settingsOpen: false,
+    chatOpen: false,
+    aiToolsOpen: false,
+    loading: false,
 
-  createFolder: async (path: string) => {
-    try {
-      await api.createFolder(path);
-      await get().refreshTree();
-    } catch (e) {
-      console.error("createFolder failed", e);
-      alert(`Failed to create folder: ${e}`);
-    }
-  },
+    initVault: async () => {
+      if (vaultInitStarted) return;
+      vaultInitStarted = true;
+      const last = await api.getLastVault();
+      if (last) await get().openVaultPath(last);
+    },
 
-  movePath: async (src: string, destDir: string) => {
-    try {
-      const newPath = await api.movePath(src, destDir);
-      if (newPath === src) return;
-      await get().refreshTree();
-      // Remap any open tabs (the moved note, or notes under a moved folder).
-      const remap = (p: string): string => {
-        if (p === src) return newPath;
-        if (p.startsWith(src + "/")) return newPath + p.slice(src.length);
-        return p;
-      };
-      const { tabs, activeTab } = get();
-      set({
-        tabs: tabs.map(remap),
-        activeTab: activeTab ? remap(activeTab) : activeTab,
+    chooseVault: async () => {
+      const path = await pickVaultFolder();
+      if (path) await get().openVaultPath(path);
+    },
+
+    openVaultPath: async (path: string) => {
+      set({ loading: true });
+      try {
+        const vault = await api.openVault(path);
+        const fresh = emptyWorkspace();
+        set({ vault, tree: vault.tree, noteModes: {}, recent: [] });
+        commit(fresh, false);
+        // Restore the saved workspace for this vault, if any.
+        try {
+          const raw = await api.readVaultMeta("workspace.json");
+          if (raw) {
+            const saved = JSON.parse(raw) as Partial<{
+              panes: Pane[];
+              activePaneId: string;
+              noteModes: Record<string, EditorMode>;
+              recent: string[];
+            }>;
+            if (saved.panes?.length) {
+              set({ noteModes: saved.noteModes ?? {}, recent: saved.recent ?? [] });
+              commit(
+                {
+                  panes: saved.panes,
+                  activePaneId: saved.activePaneId ?? saved.panes[0].id,
+                },
+                false
+              );
+            }
+          }
+        } catch {
+          /* ignore corrupt workspace */
+        }
+        // Restore per-vault settings + bookmarks.
+        try {
+          const sraw = await api.readVaultMeta("settings.json");
+          const settings: Settings = sraw
+            ? { ...defaultSettings, ...JSON.parse(sraw) }
+            : defaultSettings;
+          applyAppearance(settings);
+          setHotkeyOverrides(settings.hotkeys ?? {});
+          set({ settings });
+        } catch {
+          applyAppearance(defaultSettings);
+          set({ settings: defaultSettings });
+        }
+        try {
+          const braw = await api.readVaultMeta("bookmarks.json");
+          set({ bookmarks: braw ? JSON.parse(braw) : [] });
+        } catch {
+          set({ bookmarks: [] });
+        }
+      } catch (e) {
+        console.error("Failed to open vault:", e);
+        alert(`Failed to open vault: ${e}`);
+      } finally {
+        set({ loading: false });
+      }
+    },
+
+    refreshTree: async () => {
+      if (!get().vault) return;
+      try {
+        set({ tree: await api.getTree() });
+      } catch (e) {
+        console.error("refreshTree failed", e);
+      }
+    },
+
+    openNote: (path) => {
+      commit(openInPane(ws(), get().activePaneId, path));
+      pushRecent(path);
+    },
+    openNoteInPane: (paneId, path) => {
+      commit(openInPane(ws(), paneId, path));
+      pushRecent(path);
+    },
+    closeTab: (path) => commit(closeInPane(ws(), get().activePaneId, path)),
+    closeTabInPane: (paneId, path) => commit(closeInPane(ws(), paneId, path)),
+    setActive: (path) => commit(setActiveInPane(ws(), get().activePaneId, path)),
+    setActiveInPane: (paneId, path) => commit(setActiveInPane(ws(), paneId, path)),
+    setActivePane: (paneId) => {
+      if (get().activePaneId !== paneId) commit({ ...ws(), activePaneId: paneId });
+    },
+    splitActivePane: () => commit(splitPane(ws(), get().activePaneId)),
+    closePane: (paneId) => commit(closePane(ws(), paneId)),
+    moveTabToPane: (path, from, to) => commit(moveTab(ws(), path, from, to)),
+
+    createAndOpen: async (path) => {
+      try {
+        const rel = await api.createNote(path);
+        await get().refreshTree();
+        get().openNote(rel);
+      } catch (e) {
+        console.error("createNote failed", e);
+        alert(`Failed to create note: ${e}`);
+      }
+    },
+
+    createFolder: async (path) => {
+      try {
+        await api.createFolder(path);
+        await get().refreshTree();
+      } catch (e) {
+        console.error("createFolder failed", e);
+        alert(`Failed to create folder: ${e}`);
+      }
+    },
+
+    movePath: async (src, destDir) => {
+      try {
+        const newPath = await api.movePath(src, destDir);
+        if (newPath === src) return;
+        await get().refreshTree();
+        const remap = (p: string): string =>
+          p === src ? newPath : p.startsWith(src + "/") ? newPath + p.slice(src.length) : p;
+        commit(remapPaths(ws(), remap));
+      } catch (e) {
+        console.error("move failed", e);
+        alert(`Could not move: ${e}`);
+      }
+    },
+
+    renamePath: async (oldPath, newPath) => {
+      try {
+        const finalPath = await api.renamePath(oldPath, newPath);
+        if (finalPath === oldPath) return;
+        await get().refreshTree();
+        const remap = (p: string): string =>
+          p === oldPath
+            ? finalPath
+            : p.startsWith(oldPath + "/")
+              ? finalPath + p.slice(oldPath.length)
+              : p;
+        commit(remapPaths(ws(), remap));
+      } catch (e) {
+        console.error("rename failed", e);
+        alert(`Could not rename: ${e}`);
+      }
+    },
+
+    deleteNote: async (path) => {
+      try {
+        await api.deleteNote(path);
+        commit(removePathEverywhere(ws(), path));
+        await get().refreshTree();
+      } catch (e) {
+        console.error("delete failed", e);
+        alert(`Could not delete: ${e}`);
+      }
+    },
+
+    toggleTheme: () => {
+      const theme: Theme = get().theme === "dark" ? "light" : "dark";
+      localStorage.setItem("onyx-theme", theme);
+      applyTheme(theme);
+      set({ theme });
+    },
+
+    setPaletteOpen: (open) => set({ paletteOpen: open }),
+    openPalette: (mode) => set({ paletteMode: mode, paletteOpen: true }),
+    setNoteMode: (path, mode) => {
+      set((s) => ({ noteModes: { ...s.noteModes, [path]: mode } }));
+      schedulePersist();
+    },
+    cycleNoteMode: (path) => {
+      set((s) => {
+        const order: EditorMode[] = ["source", "live", "reading"];
+        const cur = s.noteModes[path] ?? "live";
+        const next = order[(order.indexOf(cur) + 1) % order.length];
+        return { noteModes: { ...s.noteModes, [path]: next } };
       });
-    } catch (e) {
-      console.error("move failed", e);
-      alert(`Could not move: ${e}`);
-    }
-  },
+      schedulePersist();
+    },
+    setEditorStats: (stats) => set({ editorStats: stats }),
 
-  toggleTheme: () => {
-    const theme: Theme = get().theme === "dark" ? "light" : "dark";
-    localStorage.setItem("onyx-theme", theme);
-    applyTheme(theme);
-    set({ theme });
-  },
+    setSettings: (partial) => {
+      const settings = { ...get().settings, ...partial };
+      set({ settings });
+      applyAppearance(settings);
+      setHotkeyOverrides(settings.hotkeys ?? {});
+      api.writeVaultMeta("settings.json", JSON.stringify(settings)).catch(() => {});
+    },
 
-  setPaletteOpen: (open) => set({ paletteOpen: open }),
-  setGraphOpen: (open) => set({ graphOpen: open }),
-  setSettingsOpen: (open) => set({ settingsOpen: open }),
-  setChatOpen: (open) => set({ chatOpen: open }),
-  setAiToolsOpen: (open) => set({ aiToolsOpen: open }),
-}));
+    toggleBookmark: (path) => {
+      const cur = get().bookmarks;
+      const bookmarks = cur.includes(path) ? cur.filter((p) => p !== path) : [...cur, path];
+      set({ bookmarks });
+      api.writeVaultMeta("bookmarks.json", JSON.stringify(bookmarks)).catch(() => {});
+    },
+
+    newNote: async () => {
+      const folder = get().settings.newNoteFolder.trim().replace(/\/+$/, "");
+      await get().createAndOpen(folder ? `${folder}/Untitled` : "Untitled");
+    },
+
+    openDailyNote: async () => {
+      const s2 = get().settings;
+      const fname = formatDate(s2.dailyFormat || "YYYY-MM-DD");
+      const existing = await api.resolveLink(fname).catch(() => null);
+      if (existing) return get().openNote(existing);
+      let content = "";
+      if (s2.dailyTemplate) {
+        const t = await api.readNote(s2.dailyTemplate).catch(() => "");
+        content = substituteTemplate(t, fname);
+      }
+      const folder = s2.dailyFolder.trim().replace(/\/+$/, "");
+      const rel = `${folder ? folder + "/" : ""}${fname}.md`;
+      try {
+        const newRel = await api.createNoteWithContent(rel, content);
+        await get().refreshTree();
+        get().openNote(newRel);
+      } catch (e) {
+        alert(`Could not create daily note: ${e}`);
+      }
+    },
+
+    setTemplatePickerOpen: (open) => set({ templatePickerOpen: open }),
+
+    setGraphOpen: (open) => set({ graphOpen: open }),
+    setSettingsOpen: (open) => set({ settingsOpen: open }),
+    setChatOpen: (open) => set({ chatOpen: open }),
+    setAiToolsOpen: (open) => set({ aiToolsOpen: open }),
+  };
+});

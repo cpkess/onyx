@@ -3,20 +3,23 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
 import { useStore } from "./state/store";
 import { FileTree } from "./components/FileTree";
-import { TabBar } from "./components/TabBar";
+import { PaneView } from "./components/PaneView";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
 import { GraphView } from "./components/GraphView";
 import { Settings } from "./components/Settings";
 import { ChatPanel } from "./components/ChatPanel";
 import { AiTools } from "./components/AiTools";
-import { Editor } from "./editor/Editor";
+import { StatusBar } from "./components/StatusBar";
+import { HoverPreview } from "./components/HoverPreview";
+import { TemplatePicker } from "./components/TemplatePicker";
+import { runHotkey } from "./commands/registry";
 
 function Toolbar() {
   const vault = useStore((s) => s.vault);
   const chooseVault = useStore((s) => s.chooseVault);
   const toggleTheme = useStore((s) => s.toggleTheme);
-  const setPaletteOpen = useStore((s) => s.setPaletteOpen);
+  const openPalette = useStore((s) => s.openPalette);
   const setGraphOpen = useStore((s) => s.setGraphOpen);
   const setChatOpen = useStore((s) => s.setChatOpen);
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
@@ -32,9 +35,9 @@ function Toolbar() {
       <span className="truncate text-sm text-neutral-500">{vault?.name}</span>
       <div className="flex-1" />
       <button
-        onClick={() => setPaletteOpen(true)}
+        onClick={() => openPalette("files")}
         className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-        title="Quick open / search (⌘P)"
+        title="Quick open (⌘O) · Commands (⌘P)"
       >
         Search
       </button>
@@ -107,11 +110,9 @@ function Welcome() {
 
 export default function App() {
   const vault = useStore((s) => s.vault);
-  const activeTab = useStore((s) => s.activeTab);
+  const panes = useStore((s) => s.panes);
   const initVault = useStore((s) => s.initVault);
   const refreshTree = useStore((s) => s.refreshTree);
-  const setPaletteOpen = useStore((s) => s.setPaletteOpen);
-  const setGraphOpen = useStore((s) => s.setGraphOpen);
 
   useEffect(() => {
     initVault();
@@ -132,24 +133,15 @@ export default function App() {
     };
   }, [refreshTree]);
 
-  // Global keyboard shortcuts.
+  // Global keyboard shortcuts via the command registry.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && (e.key === "p" || e.key === "k")) {
-        e.preventDefault();
-        setPaletteOpen(true);
-      } else if (mod && e.key === "g") {
-        e.preventDefault();
-        setGraphOpen(true);
-      } else if (mod && e.key === "j") {
-        e.preventDefault();
-        useStore.getState().setChatOpen(!useStore.getState().chatOpen);
-      }
+      if (e.defaultPrevented) return; // already handled (e.g. CodeMirror ⌘F)
+      if (runHotkey(e)) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setPaletteOpen, setGraphOpen]);
+  }, []);
 
   if (!vault) return <Welcome />;
 
@@ -160,27 +152,23 @@ export default function App() {
         <aside className="w-60 shrink-0 overflow-hidden border-r border-black/10 bg-neutral-50 dark:border-white/10 dark:bg-neutral-900">
           <FileTree />
         </aside>
-        <main className="flex min-w-0 flex-1 flex-col bg-white dark:bg-neutral-950/40">
-          <TabBar />
-          <div className="min-h-0 flex-1">
-            {activeTab ? (
-              <Editor key={activeTab} path={activeTab} />
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-neutral-400">
-                Select a note, or press ⌘P to search.
-              </div>
-            )}
-          </div>
+        <main className="flex min-w-0 flex-1">
+          {panes.map((p, i) => (
+            <PaneView key={p.id} pane={p} showSplitBorder={i > 0} />
+          ))}
         </main>
         <aside className="w-64 shrink-0 overflow-hidden border-l border-black/10 bg-neutral-50 dark:border-white/10 dark:bg-neutral-900">
           <Sidebar />
         </aside>
         <ChatPanel />
       </div>
+      <StatusBar />
       <CommandPalette />
       <GraphView />
       <Settings />
       <AiTools />
+      <TemplatePicker />
+      <HoverPreview />
     </div>
   );
 }

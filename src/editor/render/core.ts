@@ -8,6 +8,14 @@ export const noteNamesFacet = Facet.define<Set<string>, Set<string>>({
   combine: (values) => values[0] ?? new Set<string>(),
 });
 
+export type EditorMode = "source" | "live" | "reading";
+
+/** Current editor mode. Source = no rendering; Live = reveal active line;
+ *  Reading = render everything (no source revealed). */
+export const editorModeFacet = Facet.define<EditorMode, EditorMode>({
+  combine: (values) => values[0] ?? "live",
+});
+
 /** Callbacks the render rules may need from the host app. */
 export interface RenderCallbacks {
   /** Follow a wikilink target (optionally to a heading/block). */
@@ -71,7 +79,11 @@ function build(
   nodeRules: NodeRule[],
   regexRules: RegexRule[]
 ): DecorationSet {
-  const active = activeLines(state);
+  const mode = state.facet(editorModeFacet);
+  if (mode === "source") return Decoration.none; // raw markdown, highlight only
+  // Reading mode renders everything (nothing is "active"); Live reveals the
+  // line(s) under the cursor/selection.
+  const active = mode === "reading" ? new Set<number>() : activeLines(state);
   const names = state.facet(noteNamesFacet);
   const ranges: Range<Decoration>[] = [];
   const taken: [number, number][] = []; // replaced/widget ranges (no overlap allowed)
@@ -159,7 +171,8 @@ export function renderEngine(
       if (
         tr.docChanged ||
         tr.selection ||
-        tr.startState.facet(noteNamesFacet) !== tr.state.facet(noteNamesFacet)
+        tr.startState.facet(noteNamesFacet) !== tr.state.facet(noteNamesFacet) ||
+        tr.startState.facet(editorModeFacet) !== tr.state.facet(editorModeFacet)
       ) {
         return build(tr.state, cb, nodeRules, regexRules);
       }

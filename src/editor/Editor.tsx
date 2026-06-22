@@ -2,6 +2,13 @@ import { useEffect, useRef } from "react";
 import { EditorView, keymap, drawSelection, highlightActiveLine } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { history, defaultKeymap, historyKeymap, indentWithTab } from "@codemirror/commands";
+import {
+  foldGutter,
+  codeFolding,
+  foldKeymap,
+  foldService,
+} from "@codemirror/language";
+import { search, searchKeymap } from "@codemirror/search";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
 import {
@@ -14,6 +21,33 @@ import { useStore } from "../state/store";
 import { onyxExtensions, noteNamesFacet } from "./extensions";
 import { setActiveEditor, clearActiveEditor } from "./activeEditor";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
+import { editorModeFacet, type EditorMode } from "./render/core";
+
+/** Fold a markdown heading down to (but not including) the next same/higher heading. */
+const headingFold = foldService.of((state, from) => {
+  const line = state.doc.lineAt(from);
+  const m = line.text.match(/^(#{1,6})\s/);
+  if (!m) return null;
+  const level = m[1].length;
+  let end = state.doc.length;
+  for (let i = line.number + 1; i <= state.doc.lines; i++) {
+    const hm = state.doc.line(i).text.match(/^(#{1,6})\s/);
+    if (hm && hm[1].length <= level) {
+      end = state.doc.line(i - 1).to;
+      break;
+    }
+  }
+  return end > line.to ? { from: line.to, to: end } : null;
+});
+
+function modeExtensions(mode: EditorMode) {
+  return [editorModeFacet.of(mode), EditorView.editable.of(mode !== "reading")];
+}
+
+function countStats(text: string) {
+  const words = (text.match(/\S+/g) ?? []).length;
+  return { words, chars: text.length };
+}
 
 /** Scroll the view to a heading or `^block` anchor. */
 function scrollToAnchor(view: EditorView, anchor: string) {
@@ -54,26 +88,35 @@ const editorTheme = EditorView.theme({
     backgroundColor: "color-mix(in srgb, var(--onyx-accent) 25%, transparent)",
   },
   ".cm-activeLine": { backgroundColor: "color-mix(in srgb, gray 8%, transparent)" },
+  ".cm-gutters": { backgroundColor: "transparent", border: "none", color: "#9994" },
 });
 
-export function Editor({ path }: { path: string }) {
+const MODES: EditorMode[] = ["source", "live", "reading"];
+const MODE_LABELS: Record<EditorMode, string> = {
+  source: "Source",
+  live: "Live",
+  reading: "Read",
+};
+
+export function Editor({ path, paneId }: { path: string; paneId?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const namesCompartment = useRef(new Compartment());
+  const modeCompartment = useRef(new Compartment());
   const namesRef = useRef<string[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
 
   const openNote = useStore((s) => s.openNote);
   const createAndOpen = useStore((s) => s.createAndOpen);
+  const setNoteMode = useStore((s) => s.setNoteMode);
   const tree = useStore((s) => s.tree);
+  const mode = useStore((s) => s.noteModes[path] ?? s.settings.defaultMode);
 
   // Keep the autocomplete/link name list fresh as the vault changes.
   useEffect(() => {
     api
       .getNoteNames()
       .then((names) => {
-        // Skip the reconfigure (and the decoration rebuild it triggers) when the
-        // set of note names hasn't actually changed.
         const prev = namesRef.current;
         const unchanged =
           prev.length === names.length && prev.every((n, i) => n === names[i]);
@@ -91,10 +134,19 @@ export function Editor({ path }: { path: string }) {
       .catch(() => {});
   }, [tree]);
 
+  // Reconfigure when the view mode changes.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) {
+      view.dispatch({
+        effects: modeCompartment.current.reconfigure(modeExtensions(mode)),
+      });
+    }
+  }, [mode]);
+
   useEffect(() => {
     let disposed = false;
 
-    // Configure async resolvers used by image/embed widgets for this note.
     setHost({
       resolveAsset: (target: string) => api.resolveAsset(path, target),
       readNote: (p: string) => api.readNote(p).catch(() => null),
@@ -121,6 +173,8 @@ export function Editor({ path }: { path: string }) {
 
     api.readNote(path).then((content) => {
       if (disposed || !ref.current) return;
+      const initialMode =
+        useStore.getState().noteModes[path] ?? useStore.getState().settings.defaultMode;
       const state = EditorState.create({
         doc: content,
         extensions: [
@@ -128,39 +182,83 @@ export function Editor({ path }: { path: string }) {
           drawSelection(),
           highlightActiveLine(),
           closeBrackets(),
+          codeFolding(),
+          foldGutter(),
+          headingFold,
+          search({ top: true }),
           keymap.of([
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
+            ...foldKeymap,
+            ...searchKeymap,
             indentWithTab,
           ]),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
+          EditorView.domEventHandlers({
+            paste(event, view) {
+              const items = event.clipboardData?.items;
+              if (!items) return false;
+              for (const it of items) {
+                if (it.type.startsWith("image/")) {
+                  const file = it.getAsFile();
+                  if (!file) continue;
+                  event.preventDefault();
+                  file.arrayBuffer().then(async (buf) => {
+                    const bytes = Array.from(new Uint8Array(buf));
+                    try {
+                      const fname = await api.saveAttachment(
+                        file.name || `image.${it.type.split("/")[1] || "png"}`,
+                        bytes,
+                        useStore.getState().settings.attachmentsFolder
+                      );
+                      const pos = view.state.selection.main.head;
+                      const text = `![[${fname}]]`;
+                      view.dispatch({
+                        changes: { from: pos, insert: text },
+                        selection: { anchor: pos + text.length },
+                      });
+                    } catch (e) {
+                      console.error("attachment save failed", e);
+                    }
+                  });
+                  return true;
+                }
+              }
+              return false;
+            },
+          }),
+          modeCompartment.current.of(modeExtensions(initialMode)),
           namesCompartment.current.of(
-            noteNamesFacet.of(
-              new Set(namesRef.current.map((n) => n.toLowerCase()))
-            )
+            noteNamesFacet.of(new Set(namesRef.current.map((n) => n.toLowerCase())))
           ),
           ...onyxExtensions(callbacks),
           editorTheme,
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) scheduleSave(u.state.doc.toString());
+            if (u.docChanged) {
+              const text = u.state.doc.toString();
+              scheduleSave(text);
+              useStore.getState().setEditorStats(countStats(text));
+            }
+            if (u.focusChanged && u.view.hasFocus) {
+              setActiveEditor(u.view);
+              if (paneId) useStore.getState().setActivePane(paneId);
+            }
           }),
         ],
       });
       const view = new EditorView({ state, parent: ref.current });
       viewRef.current = view;
       setActiveEditor(view);
+      useStore.getState().setEditorStats(countStats(content));
 
-      // One-shot rebuild once the markdown parser has settled, so block widgets
-      // render on load without rebuilding on every parser-progress tick.
       window.setTimeout(() => {
         if (!disposed && viewRef.current === view) {
           view.dispatch({ selection: view.state.selection });
         }
       }, 60);
 
-      // If we navigated here via a [[Note#Heading]] link, scroll to it.
       const ps = getPendingScroll();
       if (ps && ps.path === path) {
         setPendingScroll(null);
@@ -171,7 +269,6 @@ export function Editor({ path }: { path: string }) {
     return () => {
       disposed = true;
       window.clearTimeout(saveTimer.current);
-      // Flush a pending save synchronously-ish before tearing down.
       const view = viewRef.current;
       if (view) {
         api.writeNote(path, view.state.doc.toString()).catch(() => {});
@@ -179,17 +276,35 @@ export function Editor({ path }: { path: string }) {
         view.destroy();
         viewRef.current = null;
       }
+      useStore.getState().setEditorStats(null);
     };
-    // Remounted per path via React key, so path is effectively constant here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
   return (
-    <div className="h-full overflow-hidden">
-      <div className="px-7 pt-4 text-xs uppercase tracking-wide text-neutral-400">
-        {noteName(path)}
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between px-7 pt-3 pb-1">
+        <span className="truncate text-xs uppercase tracking-wide text-neutral-400">
+          {noteName(path)}
+        </span>
+        <div className="flex rounded-md bg-black/5 p-0.5 text-xs dark:bg-white/10">
+          {MODES.map((m) => (
+            <button
+              key={m}
+              onClick={() => setNoteMode(path, m)}
+              className={`rounded px-2 py-0.5 ${
+                mode === m
+                  ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-white"
+                  : "text-neutral-500"
+              }`}
+              title={`${MODE_LABELS[m]} mode`}
+            >
+              {MODE_LABELS[m]}
+            </button>
+          ))}
+        </div>
       </div>
-      <div ref={ref} className="h-[calc(100%-2rem)]" />
+      <div ref={ref} className="min-h-0 flex-1" />
     </div>
   );
 }

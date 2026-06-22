@@ -2,6 +2,292 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, type AiConfig } from "../lib/api";
 import { useStore } from "../state/store";
+import { commands, effectiveKeys, eventToCombo } from "../commands/registry";
+import type { EditorMode } from "../editor/render/core";
+
+type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai";
+
+const field =
+  "w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[var(--onyx-accent)] dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-100";
+const label = "mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-500";
+const Row = ({ children }: { children: React.ReactNode }) => <div className="mb-4">{children}</div>;
+
+export function Settings() {
+  const open = useStore((s) => s.settingsOpen);
+  const setOpen = useStore((s) => s.setSettingsOpen);
+  const [tab, setTab] = useState<Tab>("appearance");
+
+  if (!open) return null;
+  const tabs: [Tab, string][] = [
+    ["appearance", "Appearance"],
+    ["editor", "Editor"],
+    ["files", "Files & links"],
+    ["daily", "Daily notes"],
+    ["hotkeys", "Hotkeys"],
+    ["ai", "AI (LM Studio)"],
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[8vh]"
+      onClick={() => setOpen(false)}
+    >
+      <div
+        className="flex h-[34rem] w-[44rem] max-w-[94vw] overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-black/10 dark:bg-neutral-800 dark:ring-white/10"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="w-44 shrink-0 border-r border-black/10 bg-neutral-50 p-2 dark:border-white/10 dark:bg-neutral-900">
+          {tabs.map(([t, lbl]) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`mb-0.5 block w-full rounded px-3 py-1.5 text-left text-sm ${
+                tab === t
+                  ? "bg-black/5 font-medium text-neutral-900 dark:bg-white/10 dark:text-white"
+                  : "text-neutral-500 hover:bg-black/5 dark:hover:bg-white/5"
+              }`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-neutral-900 dark:text-white">
+              {tabs.find(([t]) => t === tab)?.[1]}
+            </h2>
+            <button
+              onClick={() => setOpen(false)}
+              className="rounded px-2 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              ✕
+            </button>
+          </div>
+          {tab === "appearance" && <Appearance />}
+          {tab === "editor" && <Editor />}
+          {tab === "files" && <Files />}
+          {tab === "daily" && <Daily />}
+          {tab === "hotkeys" && <Hotkeys />}
+          {tab === "ai" && <AiSettings />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Appearance() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const theme = useStore((s) => s.theme);
+  const toggleTheme = useStore((s) => s.toggleTheme);
+  return (
+    <div>
+      <Row>
+        <label className={label}>Theme</label>
+        <button
+          onClick={toggleTheme}
+          className="rounded-md bg-black/5 px-3 py-1.5 text-sm dark:bg-white/10"
+        >
+          {theme === "dark" ? "Dark" : "Light"} — toggle
+        </button>
+      </Row>
+      <Row>
+        <label className={label}>Accent color</label>
+        <input
+          type="color"
+          value={settings.accent}
+          onChange={(e) => setSettings({ accent: e.target.value })}
+          className="h-9 w-16 rounded border border-black/10 bg-transparent dark:border-white/15"
+        />
+      </Row>
+      <Row>
+        <label className={label}>Font size ({settings.fontSize}px)</label>
+        <input
+          type="range"
+          min={12}
+          max={22}
+          value={settings.fontSize}
+          onChange={(e) => setSettings({ fontSize: Number(e.target.value) })}
+          className="w-full accent-[var(--onyx-accent)]"
+        />
+      </Row>
+      <Checkbox
+        label="Serif body font"
+        checked={settings.serif}
+        onChange={(v) => setSettings({ serif: v })}
+      />
+      <Checkbox
+        label="Readable line length"
+        checked={settings.readableWidth}
+        onChange={(v) => setSettings({ readableWidth: v })}
+      />
+    </div>
+  );
+}
+
+function Editor() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  return (
+    <Row>
+      <label className={label}>Default view mode for notes</label>
+      <select
+        className={field}
+        value={settings.defaultMode}
+        onChange={(e) => setSettings({ defaultMode: e.target.value as EditorMode })}
+      >
+        <option value="source">Source</option>
+        <option value="live">Live Preview</option>
+        <option value="reading">Reading</option>
+      </select>
+    </Row>
+  );
+}
+
+function Files() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  return (
+    <div>
+      <Row>
+        <label className={label}>Attachments folder</label>
+        <input
+          className={field}
+          value={settings.attachmentsFolder}
+          onChange={(e) => setSettings({ attachmentsFolder: e.target.value })}
+          placeholder="attachments"
+        />
+      </Row>
+      <Row>
+        <label className={label}>New note location (folder)</label>
+        <input
+          className={field}
+          value={settings.newNoteFolder}
+          onChange={(e) => setSettings({ newNoteFolder: e.target.value })}
+          placeholder="(vault root)"
+        />
+      </Row>
+      <Row>
+        <label className={label}>Templates folder</label>
+        <input
+          className={field}
+          value={settings.templatesFolder}
+          onChange={(e) => setSettings({ templatesFolder: e.target.value })}
+          placeholder="templates"
+        />
+      </Row>
+    </div>
+  );
+}
+
+function Daily() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  return (
+    <div>
+      <Row>
+        <label className={label}>Daily notes folder</label>
+        <input
+          className={field}
+          value={settings.dailyFolder}
+          onChange={(e) => setSettings({ dailyFolder: e.target.value })}
+          placeholder="(vault root)"
+        />
+      </Row>
+      <Row>
+        <label className={label}>Date format</label>
+        <input
+          className={field}
+          value={settings.dailyFormat}
+          onChange={(e) => setSettings({ dailyFormat: e.target.value })}
+          placeholder="YYYY-MM-DD"
+        />
+        <p className="mt-1 text-xs text-neutral-400">Tokens: YYYY MM DD HH mm ss</p>
+      </Row>
+      <Row>
+        <label className={label}>Template note path (optional)</label>
+        <input
+          className={field}
+          value={settings.dailyTemplate}
+          onChange={(e) => setSettings({ dailyTemplate: e.target.value })}
+          placeholder="templates/Daily.md"
+        />
+      </Row>
+    </div>
+  );
+}
+
+function Hotkeys() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const [capturing, setCapturing] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!capturing) return;
+    const onKey = (e: KeyboardEvent) => {
+      const combo = eventToCombo(e);
+      if (!combo) return;
+      e.preventDefault();
+      setSettings({ hotkeys: { ...settings.hotkeys, [capturing]: combo } });
+      setCapturing(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [capturing, settings, setSettings]);
+
+  const reset = (id: string) => {
+    const next = { ...settings.hotkeys };
+    delete next[id];
+    setSettings({ hotkeys: next });
+  };
+
+  return (
+    <div className="text-sm">
+      {commands.map((c) => (
+        <div key={c.id} className="flex items-center justify-between border-b border-black/5 py-1.5 dark:border-white/5">
+          <span className="text-neutral-700 dark:text-neutral-200">{c.name}</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCapturing(c.id)}
+              className="min-w-[5rem] rounded bg-black/5 px-2 py-0.5 text-xs text-neutral-600 dark:bg-white/10 dark:text-neutral-300"
+            >
+              {capturing === c.id ? "press keys…" : effectiveKeys(c.id) ?? "—"}
+            </button>
+            {settings.hotkeys[c.id] && (
+              <button onClick={() => reset(c.id)} className="text-xs text-neutral-400">
+                reset
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Checkbox({
+  label: text,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="mb-3 flex cursor-pointer items-center gap-2 text-sm text-neutral-700 dark:text-neutral-200">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="accent-[var(--onyx-accent)]"
+      />
+      {text}
+    </label>
+  );
+}
+
+// ---- AI (LM Studio) — preserved from the original settings ----
 
 type Status =
   | { kind: "idle" }
@@ -9,10 +295,7 @@ type Status =
   | { kind: "ok"; count: number }
   | { kind: "error"; message: string };
 
-export function Settings() {
-  const open = useStore((s) => s.settingsOpen);
-  const setOpen = useStore((s) => s.setSettingsOpen);
-
+function AiSettings() {
   const [config, setConfig] = useState<AiConfig>({
     base_url: "http://localhost:1234/v1",
     chat_model: "",
@@ -20,27 +303,16 @@ export function Settings() {
   });
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
-  const [chunkCount, setChunkCount] = useState<number>(0);
+  const [chunkCount, setChunkCount] = useState(0);
   const [indexing, setIndexing] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(
-    null
-  );
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // Load config + index status when opened.
   useEffect(() => {
-    if (!open) return;
     api.aiGetConfig().then(setConfig).catch(() => {});
     api.aiIndexStatus().then(setChunkCount).catch(() => setChunkCount(0));
-  }, [open]);
-
-  // Listen to indexing progress events.
-  useEffect(() => {
-    if (!open) return;
     const unsubs = [
-      listen<{ done: number; total: number }>("ai-index:progress", (e) =>
-        setProgress(e.payload)
-      ),
+      listen<{ done: number; total: number }>("ai-index:progress", (e) => setProgress(e.payload)),
       listen<{ chunks: number }>("ai-index:done", (e) => {
         setIndexing(false);
         setProgress(null);
@@ -52,12 +324,8 @@ export function Settings() {
         setStatus({ kind: "error", message: e.payload.error });
       }),
     ];
-    return () => {
-      unsubs.forEach((u) => u.then((fn) => fn()));
-    };
-  }, [open]);
-
-  if (!open) return null;
+    return () => unsubs.forEach((u) => u.then((fn) => fn()));
+  }, []);
 
   const testConnection = async () => {
     setStatus({ kind: "testing" });
@@ -69,15 +337,13 @@ export function Settings() {
       setStatus({ kind: "error", message: String(e) });
     }
   };
-
   const save = async () => {
     await api.aiSetConfig(config);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
-
   const indexVault = async () => {
-    await api.aiSetConfig(config); // ensure latest config is used
+    await api.aiSetConfig(config);
     setIndexing(true);
     setProgress({ done: 0, total: 0 });
     setStatus({ kind: "idle" });
@@ -90,140 +356,72 @@ export function Settings() {
     }
   };
 
-  const field =
-    "w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[var(--onyx-accent)] dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-100";
-  const label =
-    "mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-500";
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[8vh]"
-      onClick={() => setOpen(false)}
-    >
-      <div
-        className="w-[34rem] max-w-[92vw] rounded-xl bg-white p-6 shadow-2xl ring-1 ring-black/10 dark:bg-neutral-800 dark:ring-white/10"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-white">
-            AI Settings — LM Studio
-          </h2>
+    <div className="space-y-4">
+      <div>
+        <label className={label}>Base URL</label>
+        <div className="flex gap-2">
+          <input
+            className={field}
+            value={config.base_url}
+            onChange={(e) => setConfig({ ...config, base_url: e.target.value })}
+            placeholder="http://localhost:1234/v1"
+          />
           <button
-            onClick={() => setOpen(false)}
-            className="rounded px-2 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10"
+            onClick={testConnection}
+            className="shrink-0 rounded-md bg-black/5 px-3 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
           >
-            ✕
+            {status.kind === "testing" ? "Testing…" : "Test"}
           </button>
         </div>
-
-        <div className="space-y-4">
-          <div>
-            <label className={label}>Base URL</label>
-            <div className="flex gap-2">
-              <input
-                className={field}
-                value={config.base_url}
-                onChange={(e) =>
-                  setConfig({ ...config, base_url: e.target.value })
-                }
-                placeholder="http://localhost:1234/v1"
-              />
-              <button
-                onClick={testConnection}
-                className="shrink-0 rounded-md bg-black/5 px-3 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200 dark:hover:bg-white/20"
-              >
-                {status.kind === "testing" ? "Testing…" : "Test"}
-              </button>
-            </div>
-            {status.kind === "ok" && (
-              <p className="mt-1 text-xs text-green-600 dark:text-green-400">
-                Connected — {status.count} model(s) available.
-              </p>
-            )}
-            {status.kind === "error" && (
-              <p className="mt-1 text-xs text-red-500">
-                {status.message} — is LM Studio running with the server started?
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={label}>Chat model</label>
-              <ModelSelect
-                value={config.chat_model}
-                models={models}
-                onChange={(v) => setConfig({ ...config, chat_model: v })}
-              />
-            </div>
-            <div>
-              <label className={label}>Embedding model</label>
-              <ModelSelect
-                value={config.embed_model}
-                models={models}
-                onChange={(v) => setConfig({ ...config, embed_model: v })}
-              />
-            </div>
-          </div>
-          {models.length === 0 && (
-            <p className="text-xs text-neutral-400">
-              Click “Test” to load the list of models from LM Studio.
-            </p>
-          )}
-
-          <div className="rounded-lg border border-black/10 p-3 dark:border-white/10">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">
-                Semantic index
-              </span>
-              <span className="text-xs text-neutral-400">
-                {chunkCount} chunk(s) embedded
-              </span>
-            </div>
-            <p className="mb-3 text-xs text-neutral-400">
-              Embeds every note so semantic search and AI features can find
-              related content. Re-run after major edits.
-            </p>
-            {indexing && progress && (
-              <div className="mb-2">
-                <div className="h-1.5 w-full overflow-hidden rounded bg-black/10 dark:bg-white/10">
-                  <div
-                    className="h-full bg-[var(--onyx-accent)] transition-all"
-                    style={{
-                      width: progress.total
-                        ? `${(progress.done / progress.total) * 100}%`
-                        : "10%",
-                    }}
-                  />
-                </div>
-                <p className="mt-1 text-xs text-neutral-400">
-                  Embedding {progress.done}/{progress.total}…
-                </p>
-              </div>
-            )}
-            <button
-              onClick={indexVault}
-              disabled={indexing || !config.embed_model}
-              className="rounded-md bg-[var(--onyx-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
-            >
-              {indexing ? "Indexing…" : "Index vault"}
-            </button>
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-2">
-            {saved && (
-              <span className="text-xs text-green-600 dark:text-green-400">
-                Saved
-              </span>
-            )}
-            <button
-              onClick={save}
-              className="rounded-md bg-black/5 px-4 py-1.5 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200 dark:hover:bg-white/20"
-            >
-              Save
-            </button>
-          </div>
+        {status.kind === "ok" && (
+          <p className="mt-1 text-xs text-green-600 dark:text-green-400">
+            Connected — {status.count} model(s).
+          </p>
+        )}
+        {status.kind === "error" && (
+          <p className="mt-1 text-xs text-red-500">{status.message}</p>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={label}>Chat model</label>
+          <ModelSelect value={config.chat_model} models={models} onChange={(v) => setConfig({ ...config, chat_model: v })} />
         </div>
+        <div>
+          <label className={label}>Embedding model</label>
+          <ModelSelect value={config.embed_model} models={models} onChange={(v) => setConfig({ ...config, embed_model: v })} />
+        </div>
+      </div>
+      <div className="rounded-lg border border-black/10 p-3 dark:border-white/10">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">Semantic index</span>
+          <span className="text-xs text-neutral-400">{chunkCount} chunk(s)</span>
+        </div>
+        {indexing && progress && (
+          <div className="mb-2 h-1.5 w-full overflow-hidden rounded bg-black/10 dark:bg-white/10">
+            <div
+              className="h-full bg-[var(--onyx-accent)] transition-all"
+              style={{ width: progress.total ? `${(progress.done / progress.total) * 100}%` : "10%" }}
+            />
+          </div>
+        )}
+        <button
+          onClick={indexVault}
+          disabled={indexing || !config.embed_model}
+          className="rounded-md bg-[var(--onyx-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+        >
+          {indexing ? "Indexing…" : "Index vault"}
+        </button>
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        {saved && <span className="text-xs text-green-600 dark:text-green-400">Saved</span>}
+        <button
+          onClick={save}
+          className="rounded-md bg-black/5 px-4 py-1.5 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
+        >
+          Save
+        </button>
       </div>
     </div>
   );
@@ -238,12 +436,9 @@ function ModelSelect({
   models: string[];
   onChange: (v: string) => void;
 }) {
-  const cls =
-    "w-full rounded-md border border-black/10 bg-white px-2 py-2 text-sm text-neutral-800 outline-none focus:border-[var(--onyx-accent)] dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-100";
-  // Include the current value even if not in the fetched list.
   const options = Array.from(new Set([value, ...models].filter(Boolean)));
   return (
-    <select className={cls} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select className={field} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">— select —</option>
       {options.map((m) => (
         <option key={m} value={m}>

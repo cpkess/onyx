@@ -12,6 +12,8 @@ This note exercises **bold**, *italic*, ~~strike~~, ==highlight==, `inline code`
 - [ ] First task
 - [x] Done task
 - A normal bullet
+- [ ] Bullet
+
 
 ## Callout
 > [!warning] Heads up

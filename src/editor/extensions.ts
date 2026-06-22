@@ -38,12 +38,15 @@ const markdownHighlight = HighlightStyle.define([
 function clickHandler(cb: EditorCallbacks): Extension {
   return EditorView.domEventHandlers({
     mousedown(event) {
-      const el = event.target as HTMLElement;
-      const name = el?.getAttribute?.("data-wikilink");
+      // Climb to the nearest element carrying the wikilink data — the click may
+      // land on a nested span (syntax highlight) or an <a> inside a widget.
+      const el = (event.target as HTMLElement)?.closest?.(
+        "[data-wikilink]"
+      ) as HTMLElement | null;
+      const name = el?.getAttribute("data-wikilink");
       if (name) {
         event.preventDefault();
-        const anchor = el.getAttribute("data-anchor") ?? undefined;
-        cb.onFollowLink(name, anchor);
+        cb.onFollowLink(name, el?.getAttribute("data-anchor") ?? undefined);
         return true;
       }
       return false;

@@ -3,12 +3,15 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::path::Path;
 use walkdir::WalkDir;
 
 static WIKILINK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\[\[([^\]]+)\]\]").unwrap());
+// Captures optional `!` embed prefix + the body, for link rewriting on rename.
+static WIKILINK_EMBED_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(!?)\[\[([^\]\n]+)\]\]").unwrap());
 // A tag is `#` immediately followed by a word char (so markdown headings like
 // "# Title", which have a space after `#`, are not matched).
 static TAG_RE: Lazy<Regex> =
@@ -79,6 +82,13 @@ pub fn init_db(db_path: &Path) -> rusqlite::Result<Connection> {
         );
         CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
 
+        CREATE TABLE IF NOT EXISTS aliases (
+            note_id INTEGER NOT NULL,
+            alias   TEXT NOT NULL,
+            FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_aliases_alias ON aliases(alias);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
             USING fts5(path UNINDEXED, title, body);
         "#,
@@ -99,6 +109,82 @@ fn extract_title(content: &str, rel_path: &str) -> String {
         return c[1].trim().to_string();
     }
     note_name(rel_path)
+}
+
+/// Rewrite every `[[old]]` / `![[old]]` (and `old|alias`, `old#sec`) to `new`,
+/// preserving alias/section/embed. Returns the new content and the rewrite count.
+pub fn rewrite_wikilinks(content: &str, old_name: &str, new_name: &str) -> (String, usize) {
+    let mut count = 0usize;
+    let out = WIKILINK_EMBED_RE.replace_all(content, |caps: &regex::Captures| {
+        let bang = &caps[1];
+        let body = &caps[2];
+        let (target, rest) = match body.find('|') {
+            Some(i) => (&body[..i], &body[i..]),
+            None => (body, ""),
+        };
+        let (name, sec) = match target.find('#') {
+            Some(i) => (&target[..i], &target[i..]),
+            None => (target, ""),
+        };
+        if name.trim().eq_ignore_ascii_case(old_name) {
+            count += 1;
+            format!("{bang}[[{new_name}{sec}{rest}]]")
+        } else {
+            caps[0].to_string()
+        }
+    });
+    (out.into_owned(), count)
+}
+
+/// Parse frontmatter `aliases:` (inline `[a, b]` or a `- item` list) into names.
+pub fn extract_aliases(content: &str) -> Vec<String> {
+    // Frontmatter must be a leading `---` fenced block.
+    let rest = match content.strip_prefix("---\n") {
+        Some(r) => r,
+        None => return vec![],
+    };
+    let end = match rest.find("\n---") {
+        Some(i) => i,
+        None => return vec![],
+    };
+    let fm = &rest[..end];
+
+    let mut out: Vec<String> = Vec::new();
+    let mut lines = fm.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim_start();
+        if let Some(after) = trimmed.strip_prefix("aliases:") {
+            let after = after.trim();
+            if after.starts_with('[') {
+                // Inline list: aliases: [a, "b"]
+                for part in after.trim_matches(['[', ']']).split(',') {
+                    let v = part.trim().trim_matches(['"', '\'']).trim();
+                    if !v.is_empty() {
+                        out.push(v.to_string());
+                    }
+                }
+            } else if !after.is_empty() {
+                // Single scalar: aliases: foo
+                out.push(after.trim_matches(['"', '\'']).to_string());
+            } else {
+                // Block list of "- item" lines.
+                while let Some(next) = lines.peek() {
+                    let t = next.trim_start();
+                    if let Some(item) = t.strip_prefix("- ") {
+                        let v = item.trim().trim_matches(['"', '\'']).trim();
+                        if !v.is_empty() {
+                            out.push(v.to_string());
+                        }
+                        lines.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    out
 }
 
 /// Parse `[[Target]]` / `[[Target|alias]]` / `[[Target#heading]]` into bare target names.
@@ -156,6 +242,7 @@ pub fn index_note(conn: &Connection, rel_path: &str, content: &str, mtime: i64) 
 
     conn.execute("DELETE FROM links WHERE source_id = ?1", params![note_id])?;
     conn.execute("DELETE FROM tags WHERE note_id = ?1", params![note_id])?;
+    conn.execute("DELETE FROM aliases WHERE note_id = ?1", params![note_id])?;
     for target in extract_wikilinks(content) {
         conn.execute(
             "INSERT INTO links (source_id, target) VALUES (?1, ?2)",
@@ -166,6 +253,12 @@ pub fn index_note(conn: &Connection, rel_path: &str, content: &str, mtime: i64) 
         conn.execute(
             "INSERT INTO tags (note_id, tag) VALUES (?1, ?2)",
             params![note_id, tag],
+        )?;
+    }
+    for alias in extract_aliases(content) {
+        conn.execute(
+            "INSERT INTO aliases (note_id, alias) VALUES (?1, ?2)",
+            params![note_id, alias],
         )?;
     }
 
@@ -223,7 +316,7 @@ pub fn remove_note(conn: &Connection, rel_path: &str) -> rusqlite::Result<()> {
 pub fn reindex_all(conn: &mut Connection, root: &Path) -> rusqlite::Result<usize> {
     let tx = conn.transaction()?;
     tx.execute_batch(
-        "DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM notes_fts;",
+        "DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM aliases; DELETE FROM notes_fts;",
     )?;
     let mut count = 0;
     for entry in WalkDir::new(root)
@@ -308,7 +401,7 @@ pub fn search(conn: &Connection, query: &str) -> rusqlite::Result<Vec<SearchResu
     rows.collect()
 }
 
-/// All note names (file stems) for wikilink autocomplete.
+/// All note names (file stems) plus aliases, for wikilink autocomplete/existence.
 pub fn all_note_names(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT path FROM notes ORDER BY path")?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
@@ -316,9 +409,57 @@ pub fn all_note_names(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     for r in rows {
         names.push(note_name(&r?));
     }
+    let mut astmt = conn.prepare("SELECT alias FROM aliases")?;
+    for a in astmt.query_map([], |r| r.get::<_, String>(0))? {
+        names.push(a?);
+    }
     names.sort();
     names.dedup();
     Ok(names)
+}
+
+/// Resolve a wikilink name to a note path via file stem or alias.
+pub fn resolve_name(conn: &Connection, name: &str) -> rusqlite::Result<Option<String>> {
+    let target = name.to_lowercase();
+    let mut stmt = conn.prepare("SELECT path FROM notes")?;
+    let paths: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+    if let Some(p) = paths.iter().find(|p| note_name(p).to_lowercase() == target) {
+        return Ok(Some(p.clone()));
+    }
+    // Alias fallback.
+    let mut astmt = conn.prepare(
+        "SELECT n.path FROM aliases a JOIN notes n ON n.id = a.note_id
+         WHERE a.alias = ?1 COLLATE NOCASE LIMIT 1",
+    )?;
+    astmt
+        .query_row(params![name], |r| r.get::<_, String>(0))
+        .optional()
+}
+
+/// All tags with their note counts, most-used first.
+pub fn tags(conn: &Connection) -> rusqlite::Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT tag, COUNT(DISTINCT note_id) c FROM tags GROUP BY tag ORDER BY c DESC, tag",
+    )?;
+    let rows: rusqlite::Result<Vec<(String, i64)>> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+        .collect();
+    rows
+}
+
+/// Note paths carrying a given tag.
+pub fn notes_by_tag(conn: &Connection, tag: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT n.path FROM tags t JOIN notes n ON n.id = t.note_id
+         WHERE t.tag = ?1 COLLATE NOCASE ORDER BY n.path",
+    )?;
+    let rows: rusqlite::Result<Vec<String>> = stmt
+        .query_map(params![tag.trim_start_matches('#')], |r| r.get::<_, String>(0))?
+        .collect();
+    rows
 }
 
 /// Build the full link graph (resolving wikilink targets to existing notes).
@@ -386,6 +527,26 @@ mod tests {
         let bl = backlinks(&conn, "B").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].path, "a.md");
+    }
+
+    #[test]
+    fn parses_aliases_inline_and_block() {
+        let inline = "---\ntitle: X\naliases: [Foo, \"Bar Baz\"]\n---\nbody";
+        assert_eq!(extract_aliases(inline), vec!["Foo", "Bar Baz"]);
+        let block = "---\naliases:\n  - One\n  - Two\n---\nbody";
+        assert_eq!(extract_aliases(block), vec!["One", "Two"]);
+        assert_eq!(extract_aliases("no frontmatter"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn rewrites_links_on_rename() {
+        let c = "See [[Old]] and [[Old|alias]] and [[Old#Heading]] and ![[Old]] and [[Other]].";
+        let (out, n) = rewrite_wikilinks(c, "Old", "New");
+        assert_eq!(n, 4);
+        assert_eq!(
+            out,
+            "See [[New]] and [[New|alias]] and [[New#Heading]] and ![[New]] and [[Other]]."
+        );
     }
 
     #[test]

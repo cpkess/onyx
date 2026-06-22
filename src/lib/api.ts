@@ -82,13 +82,25 @@ export const api = {
   createFolder: (path: string) => invoke<string>("create_folder", { path }),
   movePath: (src: string, destDir: string) =>
     invoke<string>("move_path", { src, destDir }),
+  renamePath: (oldPath: string, newPath: string) =>
+    invoke<string>("rename_path", { old: oldPath, new: newPath }),
   resolveAsset: (currentNote: string | null, target: string) =>
     invoke<string | null>("resolve_asset", { currentNote, target }),
+  saveAttachment: (name: string, data: number[], folder?: string) =>
+    invoke<string>("save_attachment", { name, data, folder }),
+  readVaultMeta: (name: string) =>
+    invoke<string | null>("read_vault_meta", { name }),
+  writeVaultMeta: (name: string, content: string) =>
+    invoke<void>("write_vault_meta", { name, content }),
   deleteNote: (path: string) => invoke<void>("delete_note", { path }),
   getBacklinks: (name: string) => invoke<Backlink[]>("get_backlinks", { name }),
   searchNotes: (query: string) =>
     invoke<SearchResult[]>("search_notes", { query }),
   getNoteNames: () => invoke<string[]>("get_note_names"),
+  getTags: () => invoke<[string, number][]>("get_tags"),
+  getNotesByTag: (tag: string) => invoke<string[]>("get_notes_by_tag", { tag }),
+  getUnlinkedMentions: (name: string) =>
+    invoke<SearchResult[]>("get_unlinked_mentions", { name }),
   getGraph: () => invoke<GraphData>("get_graph"),
   reindex: () => invoke<number>("reindex"),
   resolveLink: (name: string) =>
