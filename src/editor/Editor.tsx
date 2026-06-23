@@ -22,6 +22,7 @@ import { onyxExtensions, noteNamesFacet } from "./extensions";
 import { setActiveEditor, clearActiveEditor } from "./activeEditor";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
 import { editorModeFacet, type EditorMode } from "./render/core";
+import { ensurePages, onPagesChanged } from "../dataview/pages";
 
 /** Fold a markdown heading down to (but not including) the next same/higher heading. */
 const headingFold = foldService.of((state, from) => {
@@ -153,7 +154,14 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
       resolvePath: (name: string) => api.resolveLink(name),
     });
 
+    // Re-render dataview widgets when the page cache changes.
+    const unsubPages = onPagesChanged(() => {
+      const v = viewRef.current;
+      if (v) v.dispatch({ selection: v.state.selection });
+    });
+
     const callbacks = {
+      currentPath: path,
       getNoteNames: () => namesRef.current,
       onFollowLink: async (name: string, anchor?: string) => {
         const resolved = await api.resolveLink(name);
@@ -259,6 +267,13 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
         }
       }, 60);
 
+      // Load Dataview pages and re-render dataview/inline-DQL widgets when ready.
+      ensurePages().then(() => {
+        if (!disposed && viewRef.current === view) {
+          view.dispatch({ selection: view.state.selection });
+        }
+      });
+
       const ps = getPendingScroll();
       if (ps && ps.path === path) {
         setPendingScroll(null);
@@ -268,6 +283,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
 
     return () => {
       disposed = true;
+      unsubPages();
       window.clearTimeout(saveTimer.current);
       const view = viewRef.current;
       if (view) {

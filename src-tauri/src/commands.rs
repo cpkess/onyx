@@ -409,6 +409,38 @@ pub fn get_graph(state: State<AppState>) -> Result<GraphData, String> {
     with_vault(&state, |ctx| index::graph(&ctx.conn).map_err(|e| e.to_string()))
 }
 
+/// All notes as queryable Dataview "pages" (metadata, fields, tasks, links).
+#[tauri::command]
+pub fn get_pages(state: State<AppState>) -> Result<Vec<index::Page>, String> {
+    with_vault(&state, |ctx| index::pages(&ctx.conn, &ctx.root).map_err(|e| e.to_string()))
+}
+
+/// Toggle the checkbox of a task at `line` (0-based) in a note.
+#[tauri::command]
+pub fn toggle_task(state: State<AppState>, path: String, line: usize) -> Result<(), String> {
+    with_vault(&state, |ctx| {
+        let abs = vault::resolve(&ctx.root, &path)?;
+        let content = std::fs::read_to_string(&abs).map_err(|e| e.to_string())?;
+        let mut lines: Vec<String> = content.split('\n').map(String::from).collect();
+        if line >= lines.len() {
+            return Err("Task line out of range".into());
+        }
+        let l = &lines[line];
+        lines[line] = if l.contains("[ ]") {
+            l.replacen("[ ]", "[x]", 1)
+        } else if l.contains("[x]") {
+            l.replacen("[x]", "[ ]", 1)
+        } else if l.contains("[X]") {
+            l.replacen("[X]", "[ ]", 1)
+        } else {
+            l.clone()
+        };
+        let new_content = lines.join("\n");
+        std::fs::write(&abs, &new_content).map_err(|e| e.to_string())?;
+        index::index_note(&ctx.conn, &path, &new_content, now_secs()).map_err(|e| e.to_string())
+    })
+}
+
 /// Full reindex (used after the watcher reports external changes).
 #[tauri::command]
 pub fn reindex(state: State<AppState>) -> Result<usize, String> {

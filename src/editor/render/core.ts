@@ -18,6 +18,8 @@ export const editorModeFacet = Facet.define<EditorMode, EditorMode>({
 
 /** Callbacks the render rules may need from the host app. */
 export interface RenderCallbacks {
+  /** The vault-relative path of the note being edited (for Dataview `this`). */
+  currentPath?: string;
   /** Follow a wikilink target (optionally to a heading/block). */
   onFollowLink: (name: string, anchor?: string) => void;
   /** Resolve an asset/embed target to a usable <img> src (async). */

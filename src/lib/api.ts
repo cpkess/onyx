@@ -42,6 +42,27 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export interface PageTask {
+  text: string;
+  checked: boolean;
+  line: number;
+  path: string;
+}
+
+export interface Page {
+  path: string;
+  name: string;
+  folder: string;
+  tags: string[];
+  mtime: number;
+  ctime: number;
+  size: number;
+  fields: Record<string, unknown>;
+  tasks: PageTask[];
+  outlinks: string[];
+  inlinks: string[];
+}
+
 export interface AiConfig {
   base_url: string;
   chat_model: string;
@@ -102,6 +123,9 @@ export const api = {
   getUnlinkedMentions: (name: string) =>
     invoke<SearchResult[]>("get_unlinked_mentions", { name }),
   getGraph: () => invoke<GraphData>("get_graph"),
+  getPages: () => invoke<Page[]>("get_pages"),
+  toggleTask: (path: string, line: number) =>
+    invoke<void>("toggle_task", { path, line }),
   reindex: () => invoke<number>("reindex"),
   resolveLink: (name: string) =>
     invoke<string | null>("resolve_link", { name }),

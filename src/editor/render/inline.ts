@@ -1,6 +1,23 @@
 import { Decoration } from "@codemirror/view";
 import type { NodeRule, RegexRule } from "./core";
-import { FootnoteRefWidget, MathWidget } from "./widgets";
+import { FootnoteRefWidget, InlineDqlWidget, MathWidget } from "./widgets";
+import { pagesVersion } from "../../dataview/pages";
+
+// Inline DQL: `= expr` in an inline-code span → evaluated value.
+const inlineDqlRule: NodeRule = (node, ctx) => {
+  if (node.name !== "InlineCode") return;
+  if (ctx.lineActive(node.from)) return;
+  const raw = ctx.state.doc.sliceString(node.from, node.to);
+  const body = raw.replace(/^`+/, "").replace(/`+$/, "");
+  if (!body.startsWith("=")) return;
+  const expr = body.slice(1).trim();
+  if (!expr) return;
+  ctx.replace(
+    node.from,
+    node.to,
+    new InlineDqlWidget(expr, pagesVersion(), ctx.cb.currentPath ?? null)
+  );
+};
 
 // ---- Inline marker hiding (headings, bold/italic, strikethrough, code) ----
 
@@ -162,7 +179,7 @@ const blockIds: RegexRule = (text, offset, ctx) => {
   }
 };
 
-export const inlineNodeRules: NodeRule[] = [markerHider];
+export const inlineNodeRules: NodeRule[] = [inlineDqlRule, markerHider];
 export const inlineRegexRules: RegexRule[] = [inlineTokens, footnotes, math, blockIds];
 
 

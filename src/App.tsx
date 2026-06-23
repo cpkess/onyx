@@ -14,6 +14,7 @@ import { StatusBar } from "./components/StatusBar";
 import { HoverPreview } from "./components/HoverPreview";
 import { TemplatePicker } from "./components/TemplatePicker";
 import { runHotkey } from "./commands/registry";
+import { invalidatePages } from "./dataview/pages";
 
 function Toolbar() {
   const vault = useStore((s) => s.vault);
@@ -127,6 +128,7 @@ export default function App() {
         /* no vault open */
       }
       refreshTree();
+      invalidatePages();
     });
     return () => {
       unlisten.then((fn) => fn());

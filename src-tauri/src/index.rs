@@ -5,6 +5,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -17,6 +18,14 @@ static WIKILINK_EMBED_RE: Lazy<Regex> =
 static TAG_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?:^|[^\w&])#([A-Za-z0-9_][A-Za-z0-9_/-]*)").unwrap());
 static H1_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^#\s+(.+)$").unwrap());
+// Standalone inline field at line start: `Key:: value`
+static INLINE_FIELD_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^[ \t>]*([A-Za-z][\w \-/]*?)::[ \t]*(.*)$").unwrap());
+// Bracketed inline field: `[key:: value]` or `(key:: value)`
+static INLINE_FIELD_BRACKET_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[\[(]([A-Za-z][\w \-/]*?)::[ \t]*([^\])]*)[\])]").unwrap());
+static TASK_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[ \t]*[-*+] \[([ xX])\]\s+(.*)$").unwrap());
 
 #[derive(Debug, Serialize)]
 pub struct Backlink {
@@ -88,6 +97,24 @@ pub fn init_db(db_path: &Path) -> rusqlite::Result<Connection> {
             FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_aliases_alias ON aliases(alias);
+
+        CREATE TABLE IF NOT EXISTS fields (
+            note_id INTEGER NOT NULL,
+            key     TEXT NOT NULL,
+            value   TEXT NOT NULL,   -- JSON-encoded value
+            source  TEXT NOT NULL,   -- 'fm' | 'inline'
+            FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_fields_note ON fields(note_id);
+
+        CREATE TABLE IF NOT EXISTS tasks (
+            note_id INTEGER NOT NULL,
+            text    TEXT NOT NULL,
+            checked INTEGER NOT NULL,
+            line    INTEGER NOT NULL,
+            FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks(note_id);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
             USING fts5(path UNINDEXED, title, body);
@@ -187,6 +214,79 @@ pub fn extract_aliases(content: &str) -> Vec<String> {
     out
 }
 
+/// The leading `---` frontmatter block, if present.
+fn frontmatter_str(content: &str) -> Option<&str> {
+    let rest = content.strip_prefix("---\n")?;
+    let end = rest.find("\n---")?;
+    Some(&rest[..end])
+}
+
+/// Dataview-style key sanitization: trim, lowercase, spaces → dashes.
+fn sanitize_key(k: &str) -> String {
+    k.trim().to_lowercase().replace(' ', "-")
+}
+
+/// Parse YAML frontmatter into `(key, value_json)` pairs (one row per top-level key).
+pub fn extract_frontmatter_fields(content: &str) -> Vec<(String, String)> {
+    let fm = match frontmatter_str(content) {
+        Some(f) => f,
+        None => return vec![],
+    };
+    let yaml: serde_yaml::Value = match serde_yaml::from_str(fm) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    let json: serde_json::Value = match serde_json::to_value(yaml) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+    let mut out = Vec::new();
+    if let serde_json::Value::Object(map) = json {
+        for (k, v) in map {
+            out.push((sanitize_key(&k), v.to_string()));
+        }
+    }
+    out
+}
+
+/// Parse inline `Key:: value`, `[k:: v]`, `(k:: v)` fields into `(key, value_json)`.
+pub fn extract_inline_fields(content: &str) -> Vec<(String, String)> {
+    // Skip the frontmatter region so `key: value` YAML isn't double-counted.
+    let body_start = frontmatter_str(content)
+        .map(|fm| content.find(fm).unwrap_or(0) + fm.len() + 4)
+        .unwrap_or(0);
+    let body = &content[body_start.min(content.len())..];
+
+    let mut out = Vec::new();
+    let mut push = |k: &str, v: &str| {
+        let key = sanitize_key(k);
+        if !key.is_empty() {
+            out.push((key, serde_json::Value::String(v.trim().to_string()).to_string()));
+        }
+    };
+    for c in INLINE_FIELD_RE.captures_iter(body) {
+        // Don't capture markdown headings or `::` inside code; the regex already
+        // requires a leading word char, which excludes most false positives.
+        push(&c[1], &c[2]);
+    }
+    for c in INLINE_FIELD_BRACKET_RE.captures_iter(body) {
+        push(&c[1], &c[2]);
+    }
+    out
+}
+
+/// Parse GFM task list items into `(text, checked, line_number)` (0-based line).
+pub fn extract_tasks(content: &str) -> Vec<(String, bool, i64)> {
+    let mut out = Vec::new();
+    for (i, line) in content.lines().enumerate() {
+        if let Some(c) = TASK_RE.captures(line) {
+            let checked = matches!(&c[1], "x" | "X");
+            out.push((c[2].trim().to_string(), checked, i as i64));
+        }
+    }
+    out
+}
+
 /// Parse `[[Target]]` / `[[Target|alias]]` / `[[Target#heading]]` into bare target names.
 pub fn extract_wikilinks(content: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -243,6 +343,8 @@ pub fn index_note(conn: &Connection, rel_path: &str, content: &str, mtime: i64) 
     conn.execute("DELETE FROM links WHERE source_id = ?1", params![note_id])?;
     conn.execute("DELETE FROM tags WHERE note_id = ?1", params![note_id])?;
     conn.execute("DELETE FROM aliases WHERE note_id = ?1", params![note_id])?;
+    conn.execute("DELETE FROM fields WHERE note_id = ?1", params![note_id])?;
+    conn.execute("DELETE FROM tasks WHERE note_id = ?1", params![note_id])?;
     for target in extract_wikilinks(content) {
         conn.execute(
             "INSERT INTO links (source_id, target) VALUES (?1, ?2)",
@@ -259,6 +361,24 @@ pub fn index_note(conn: &Connection, rel_path: &str, content: &str, mtime: i64) 
         conn.execute(
             "INSERT INTO aliases (note_id, alias) VALUES (?1, ?2)",
             params![note_id, alias],
+        )?;
+    }
+    for (key, value) in extract_frontmatter_fields(content) {
+        conn.execute(
+            "INSERT INTO fields (note_id, key, value, source) VALUES (?1, ?2, ?3, 'fm')",
+            params![note_id, key, value],
+        )?;
+    }
+    for (key, value) in extract_inline_fields(content) {
+        conn.execute(
+            "INSERT INTO fields (note_id, key, value, source) VALUES (?1, ?2, ?3, 'inline')",
+            params![note_id, key, value],
+        )?;
+    }
+    for (text, checked, line) in extract_tasks(content) {
+        conn.execute(
+            "INSERT INTO tasks (note_id, text, checked, line) VALUES (?1, ?2, ?3, ?4)",
+            params![note_id, text, checked as i64, line],
         )?;
     }
 
@@ -316,7 +436,7 @@ pub fn remove_note(conn: &Connection, rel_path: &str) -> rusqlite::Result<()> {
 pub fn reindex_all(conn: &mut Connection, root: &Path) -> rusqlite::Result<usize> {
     let tx = conn.transaction()?;
     tx.execute_batch(
-        "DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM aliases; DELETE FROM notes_fts;",
+        "DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM aliases; DELETE FROM fields; DELETE FROM tasks; DELETE FROM notes_fts;",
     )?;
     let mut count = 0;
     for entry in WalkDir::new(root)
@@ -497,6 +617,159 @@ pub fn graph(conn: &Connection) -> rusqlite::Result<GraphData> {
     Ok(GraphData { nodes, edges })
 }
 
+#[derive(Debug, Serialize)]
+pub struct PageTask {
+    pub text: String,
+    pub checked: bool,
+    pub line: i64,
+    pub path: String,
+}
+
+/// A queryable "page" for the Dataview engine: a note plus its metadata.
+#[derive(Debug, Serialize)]
+pub struct Page {
+    pub path: String,
+    pub name: String,
+    pub folder: String,
+    pub tags: Vec<String>,
+    pub mtime: i64,
+    pub ctime: i64,
+    pub size: i64,
+    pub fields: serde_json::Value, // object of frontmatter + inline fields
+    pub tasks: Vec<PageTask>,
+    pub outlinks: Vec<String>, // resolved note paths
+    pub inlinks: Vec<String>,
+}
+
+/// Assemble every note into a `Page` with frontmatter/inline fields, tasks,
+/// tags and resolved in/out links. Used by the Dataview query engine.
+pub fn pages(conn: &Connection, root: &Path) -> rusqlite::Result<Vec<Page>> {
+    let mut ns = conn.prepare("SELECT id, path, mtime FROM notes")?;
+    let notes: Vec<(i64, String, i64)> = ns
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+
+    // name (stem) + alias -> path, for link resolution.
+    let mut name_to_path: HashMap<String, String> = HashMap::new();
+    for (_, p, _) in &notes {
+        name_to_path.insert(note_name(p).to_lowercase(), p.clone());
+    }
+    {
+        let mut al = conn.prepare("SELECT a.alias, n.path FROM aliases a JOIN notes n ON n.id = a.note_id")?;
+        for row in al.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+            let (a, p) = row?;
+            name_to_path.entry(a.to_lowercase()).or_insert(p);
+        }
+    }
+
+    let mut tags_by: HashMap<i64, Vec<String>> = HashMap::new();
+    {
+        let mut tg = conn.prepare("SELECT note_id, tag FROM tags")?;
+        for row in tg.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, t) = row?;
+            tags_by.entry(id).or_default().push(t);
+        }
+    }
+
+    let mut fields_by: HashMap<i64, serde_json::Map<String, serde_json::Value>> = HashMap::new();
+    {
+        let mut fl = conn.prepare("SELECT note_id, key, value FROM fields")?;
+        for row in fl.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+        })? {
+            let (id, k, vjson) = row?;
+            let v: serde_json::Value =
+                serde_json::from_str(&vjson).unwrap_or(serde_json::Value::String(vjson));
+            let map = fields_by.entry(id).or_default();
+            match map.get_mut(&k) {
+                Some(serde_json::Value::Array(arr)) => arr.push(v),
+                Some(existing) => {
+                    *existing = serde_json::Value::Array(vec![existing.clone(), v]);
+                }
+                None => {
+                    map.insert(k, v);
+                }
+            }
+        }
+    }
+
+    let mut tasks_by: HashMap<i64, Vec<(String, bool, i64)>> = HashMap::new();
+    {
+        let mut tk = conn.prepare("SELECT note_id, text, checked, line FROM tasks ORDER BY line")?;
+        for row in tk.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)?))
+        })? {
+            let (id, t, c, l) = row?;
+            tasks_by.entry(id).or_default().push((t, c != 0, l));
+        }
+    }
+
+    let id_to_path: HashMap<i64, String> =
+        notes.iter().map(|(id, p, _)| (*id, p.clone())).collect();
+    let mut outlinks_by: HashMap<i64, Vec<String>> = HashMap::new();
+    let mut inlinks_by: HashMap<String, Vec<String>> = HashMap::new();
+    {
+        let mut lk = conn.prepare("SELECT source_id, target FROM links")?;
+        for row in lk.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (sid, target) = row?;
+            let tname = target
+                .split('#')
+                .next()
+                .unwrap_or(&target)
+                .split('|')
+                .next()
+                .unwrap_or(&target)
+                .trim()
+                .to_lowercase();
+            if let Some(tp) = name_to_path.get(&tname) {
+                outlinks_by.entry(sid).or_default().push(tp.clone());
+                if let Some(sp) = id_to_path.get(&sid) {
+                    inlinks_by.entry(tp.clone()).or_default().push(sp.clone());
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::with_capacity(notes.len());
+    for (id, path, mtime) in &notes {
+        let (ctime, size) = std::fs::metadata(root.join(path))
+            .map(|m| {
+                let ct = m
+                    .created()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                (ct, m.len() as i64)
+            })
+            .unwrap_or((0, 0));
+        let folder = Path::new(path)
+            .parent()
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let tasks = tasks_by
+            .remove(id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(text, checked, line)| PageTask { text, checked, line, path: path.clone() })
+            .collect();
+        out.push(Page {
+            path: path.clone(),
+            name: note_name(path),
+            folder,
+            tags: tags_by.remove(id).unwrap_or_default(),
+            mtime: *mtime,
+            ctime,
+            size,
+            fields: serde_json::Value::Object(fields_by.remove(id).unwrap_or_default()),
+            tasks,
+            outlinks: outlinks_by.remove(id).unwrap_or_default(),
+            inlinks: inlinks_by.remove(path).unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +800,27 @@ mod tests {
         let bl = backlinks(&conn, "B").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].path, "a.md");
+    }
+
+    #[test]
+    fn parses_frontmatter_and_inline_fields() {
+        let c = "---\nstatus: reading\nRating: 9\n---\nrating:: 8\nprose with a [due:: 2026-07-01] field";
+        let fm = extract_frontmatter_fields(c);
+        let keys: Vec<&str> = fm.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"status"), "frontmatter fields: {fm:?}");
+        assert!(keys.contains(&"rating"), "frontmatter fields: {fm:?}");
+        let inline = extract_inline_fields(c);
+        assert!(inline.iter().any(|(k, _)| k == "rating"), "inline: {inline:?}");
+        assert!(inline.iter().any(|(k, _)| k == "due"), "inline: {inline:?}");
+    }
+
+    #[test]
+    fn parses_tasks_with_lines() {
+        let c = "intro\n- [ ] todo one\n- [x] done two\nplain";
+        let tasks = extract_tasks(c);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0], ("todo one".into(), false, 1));
+        assert_eq!(tasks[1], ("done two".into(), true, 2));
     }
 
     #[test]

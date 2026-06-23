@@ -316,6 +316,140 @@ body {
   opacity: 0.65;
 }
 
+/* WYSIWYG table editor */
+.onyx-table-edit .dv-h,
+.onyx-table-edit .dv-c {
+  width: 100%;
+  min-width: 3em;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  padding: 0;
+}
+.onyx-table-edit .dv-h {
+  font-weight: 700;
+}
+.onyx-table-edit th {
+  position: relative;
+}
+.onyx-th-tools {
+  display: none;
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  gap: 1px;
+}
+.onyx-table-edit th:hover .onyx-th-tools {
+  display: inline-flex;
+}
+.onyx-th-tools button,
+.onyx-actions button,
+.onyx-addcol,
+.onyx-addrow {
+  cursor: pointer;
+  border: none;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  font-size: 0.7em;
+  line-height: 1;
+  padding: 1px 3px;
+  opacity: 0.6;
+}
+.onyx-th-tools button:hover,
+.onyx-actions button:hover,
+.onyx-addcol:hover,
+.onyx-addrow:hover {
+  opacity: 1;
+}
+.onyx-table-edit .onyx-actions {
+  border: none;
+  width: 1.4em;
+  text-align: center;
+}
+.onyx-table-edit .onyx-actions button {
+  opacity: 0;
+}
+.onyx-table-edit tr:hover .onyx-actions button {
+  opacity: 0.6;
+}
+.onyx-addcol {
+  width: 1.6em;
+  text-align: center;
+}
+.onyx-addrow {
+  margin-top: 0.25em;
+}
+
+/* Dataview */
+.onyx-dataview {
+  margin: 0.4em 0;
+  font-size: 0.95em;
+}
+.onyx-dataview table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.onyx-dataview th,
+.onyx-dataview td {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  padding: 0.3em 0.6em;
+  text-align: left;
+  vertical-align: top;
+}
+.onyx-dataview th {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  font-weight: 600;
+}
+.onyx-dataview ul {
+  margin: 0.2em 0;
+  padding-left: 1.2em;
+}
+.onyx-dv-tasks {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.onyx-dv-tasks input {
+  margin-right: 0.4em;
+  accent-color: var(--onyx-accent);
+}
+.onyx-dv-key {
+  margin: 0.5em 0 0.2em;
+  font-weight: 700;
+  color: var(--onyx-accent);
+}
+.onyx-dv-empty {
+  color: #888;
+  font-style: italic;
+  font-size: 0.9em;
+}
+.onyx-dv-error {
+  color: #e0524c;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
+.onyx-dv-cal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+.onyx-dv-calday {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 6px;
+  padding: 0.3em 0.5em;
+  min-width: 7rem;
+  font-size: 0.85em;
+  display: flex;
+  flex-direction: column;
+}
+.onyx-inline-dql {
+  color: var(--onyx-accent);
+}
+
 /* Thin scrollbars to match a notes app. */
 * {
   scrollbar-width: thin;

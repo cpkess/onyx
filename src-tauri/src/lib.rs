@@ -39,6 +39,8 @@ pub fn run() {
             commands::get_tags,
             commands::get_notes_by_tag,
             commands::get_unlinked_mentions,
+            commands::get_pages,
+            commands::toggle_task,
             commands::ai_get_config,
             commands::ai_set_config,
             commands::ai_list_models,

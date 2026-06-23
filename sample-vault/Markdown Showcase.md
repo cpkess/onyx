@@ -21,9 +21,9 @@ This note exercises **bold**, *italic*, ~~strike~~, ==highlight==, `inline code`
 
 ## Table
 | Feature | Status |
-|---------|--------|
-| Tables  | ✅     |
-| Math    | ✅     |
+| ------- | ------ |
+| Tables  | ✅      |
+| Math    | ✅      |
 
 ## Code
 ```ts

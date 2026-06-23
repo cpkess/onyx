@@ -1,7 +1,12 @@
 import { EditorView, WidgetType } from "@codemirror/view";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { renderMarkdown } from "./markdown";
+import { renderMarkdown, renderInline } from "./markdown";
 import { getHost } from "./host";
+import { api } from "../../lib/api";
+import { runDql, runInline, toText, type DvResult } from "../../dataview/engine";
+import { DvLink } from "../../dataview/value";
+import { getCachedPages, invalidatePages } from "../../dataview/pages";
+import { parseTable, serializeTable, nextAlign, type TableGrid } from "./table";
 
 /** Extract a heading section or `^block` from note content for embeds. */
 function extractSection(content: string, anchor: string): string {
@@ -220,11 +225,144 @@ export class TableWidget extends WidgetType {
   eq(o: TableWidget) {
     return o.source === this.source;
   }
-  toDOM() {
-    const el = document.createElement("div");
-    el.className = "onyx-table onyx-rendered";
-    el.innerHTML = renderMarkdown(this.source);
-    return el;
+  ignoreEvent() {
+    return true; // let our cell editing handle events; don't move the CM cursor
+  }
+  toDOM(view: EditorView) {
+    const grid = parseTable(this.source);
+    const wrap = document.createElement("div");
+    wrap.className = "onyx-table onyx-rendered onyx-table-edit";
+    // Mark non-editable so CodeMirror's DOM observer treats the widget as atomic
+    // and never tries to interpret the <input> cells as document edits.
+    wrap.contentEditable = "false";
+
+    const cellInput = (cls: string, value: string) => {
+      const inp = document.createElement("input");
+      inp.className = cls;
+      inp.type = "text";
+      inp.value = value;
+      inp.spellcheck = false;
+      inp.addEventListener("blur", () => commit(readGrid()));
+      return inp;
+    };
+    const readGrid = (): TableGrid => {
+      const header = Array.from(wrap.querySelectorAll<HTMLInputElement>(".dv-h")).map((e) =>
+        e.value.trim()
+      );
+      const rows = Array.from(wrap.querySelectorAll<HTMLElement>("tbody tr")).map((tr) =>
+        Array.from(tr.querySelectorAll<HTMLInputElement>(".dv-c")).map((e) => e.value.trim())
+      );
+      return { header, aligns: grid.aligns.slice(0, header.length), rows };
+    };
+    const commit = (g: TableGrid) => {
+      const md = serializeTable(g);
+      if (md === this.source) return;
+      const from = view.posAtDOM(wrap);
+      view.dispatch({ changes: { from, to: from + this.source.length, insert: md } });
+    };
+    const btnDown = (fn: () => void) => (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    };
+
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const htr = document.createElement("tr");
+    grid.header.forEach((h, c) => {
+      const th = document.createElement("th");
+      th.style.textAlign = grid.aligns[c] === "none" ? "left" : grid.aligns[c];
+      const cell = cellInput("dv-h", h);
+      const tools = document.createElement("span");
+      tools.className = "onyx-th-tools";
+      const align = document.createElement("button");
+      align.textContent = "⇄";
+      align.title = "Cycle alignment";
+      align.addEventListener(
+        "mousedown",
+        btnDown(() => {
+          const g = readGrid();
+          g.aligns[c] = nextAlign(g.aligns[c] ?? "none");
+          commit(g);
+        })
+      );
+      const del = document.createElement("button");
+      del.textContent = "✕";
+      del.title = "Delete column";
+      del.addEventListener(
+        "mousedown",
+        btnDown(() => {
+          const g = readGrid();
+          g.header.splice(c, 1);
+          g.aligns.splice(c, 1);
+          g.rows.forEach((r) => r.splice(c, 1));
+          commit(g);
+        })
+      );
+      tools.append(align, del);
+      th.append(cell, tools);
+      htr.appendChild(th);
+    });
+    const addCol = document.createElement("th");
+    addCol.className = "onyx-addcol";
+    addCol.textContent = "＋";
+    addCol.title = "Add column";
+    addCol.addEventListener(
+      "mousedown",
+      btnDown(() => {
+        const g = readGrid();
+        g.header.push("New");
+        g.aligns.push("none");
+        g.rows.forEach((r) => r.push(""));
+        commit(g);
+      })
+    );
+    htr.appendChild(addCol);
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    grid.rows.forEach((row, r) => {
+      const tr = document.createElement("tr");
+      row.forEach((cellText, c) => {
+        const td = document.createElement("td");
+        td.style.textAlign = grid.aligns[c] === "none" ? "left" : grid.aligns[c];
+        td.appendChild(cellInput("dv-c", cellText));
+        tr.appendChild(td);
+      });
+      const actions = document.createElement("td");
+      actions.className = "onyx-actions";
+      const delRow = document.createElement("button");
+      delRow.textContent = "✕";
+      delRow.title = "Delete row";
+      delRow.addEventListener(
+        "mousedown",
+        btnDown(() => {
+          const g = readGrid();
+          g.rows.splice(r, 1);
+          commit(g);
+        })
+      );
+      actions.appendChild(delRow);
+      tr.appendChild(actions);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const addRow = document.createElement("button");
+    addRow.className = "onyx-addrow";
+    addRow.textContent = "＋ Row";
+    addRow.addEventListener(
+      "mousedown",
+      btnDown(() => {
+        const g = readGrid();
+        g.rows.push(new Array(g.header.length).fill(""));
+        commit(g);
+      })
+    );
+    wrap.appendChild(addRow);
+    return wrap;
   }
 }
 
@@ -383,5 +521,130 @@ export class BulletWidget extends WidgetType {
     el.className = "onyx-bullet";
     el.textContent = "•";
     return el;
+  }
+}
+
+// ---- Dataview ----
+
+function escAttr(s: string): string {
+  return s.replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+function escHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function cellHtml(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof DvLink) {
+    const label = v.display ?? v.name;
+    return `<a class="tok-wikilink" data-wikilink="${escAttr(v.name)}">${escHtml(label)}</a>`;
+  }
+  if (Array.isArray(v)) return v.map(cellHtml).join(", ");
+  if (typeof v === "boolean") return v ? "✓" : "✗";
+  if (typeof v === "number") return String(v);
+  if (v instanceof Date) return escHtml(toText(v));
+  if (typeof v === "object") return escHtml(toText(v));
+  return renderInline(String(v));
+}
+
+function renderDvResult(res: DvResult): string {
+  if (res.kind === "error") return `<div class="onyx-dv-error">${escHtml(res.message)}</div>`;
+
+  if (res.kind === "table") {
+    const head = `<thead><tr>${res.headers.map((h) => `<th>${escHtml(h)}</th>`).join("")}</tr></thead>`;
+    const body = (rows: unknown[][]) =>
+      rows.map((r) => `<tr>${r.map((c) => `<td>${cellHtml(c)}</td>`).join("")}</tr>`).join("");
+    if (res.groups) {
+      return res.groups
+        .map(
+          (g) =>
+            `<div class="onyx-dv-group"><div class="onyx-dv-key">${cellHtml(g.key)}</div>` +
+            `<table>${head}<tbody>${body(g.rows)}</tbody></table></div>`
+        )
+        .join("");
+    }
+    if (res.rows.length === 0) return `<div class="onyx-dv-empty">No results.</div>`;
+    return `<table>${head}<tbody>${body(res.rows)}</tbody></table>`;
+  }
+
+  if (res.kind === "list") {
+    const ul = (items: unknown[]) => `<ul>${items.map((i) => `<li>${cellHtml(i)}</li>`).join("")}</ul>`;
+    if (res.groups) return res.groups.map((g) => `<div class="onyx-dv-key">${cellHtml(g.key)}</div>${ul(g.items)}`).join("");
+    if (res.items.length === 0) return `<div class="onyx-dv-empty">No results.</div>`;
+    return ul(res.items);
+  }
+
+  if (res.kind === "task") {
+    if (res.tasks.length === 0) return `<div class="onyx-dv-empty">No tasks.</div>`;
+    return `<ul class="onyx-dv-tasks">${res.tasks
+      .map(
+        (t) =>
+          `<li><label><input type="checkbox" ${t.checked ? "checked" : ""} ` +
+          `data-task-path="${escAttr(t.path)}" data-task-line="${t.line}"> ${renderInline(t.text)}</label></li>`
+      )
+      .join("")}</ul>`;
+  }
+
+  // calendar — lightweight: dates with their entries
+  const days = Object.keys(res.byDate).sort();
+  if (days.length === 0) return `<div class="onyx-dv-empty">No dated entries.</div>`;
+  return `<div class="onyx-dv-cal">${days
+    .map(
+      (d) =>
+        `<div class="onyx-dv-calday"><div class="onyx-dv-key">${escHtml(d)}</div>` +
+        res.byDate[d]
+          .map((e) => `<a class="tok-wikilink" data-wikilink="${escAttr(e.label)}">${escHtml(e.label)}</a>`)
+          .join("") +
+        `</div>`
+    )
+    .join("")}</div>`;
+}
+
+export class DataviewWidget extends WidgetType {
+  constructor(
+    readonly source: string,
+    readonly version: number,
+    readonly currentPath: string | null
+  ) {
+    super();
+  }
+  eq(o: DataviewWidget) {
+    return o.source === this.source && o.version === this.version && o.currentPath === this.currentPath;
+  }
+  toDOM() {
+    const el = document.createElement("div");
+    el.className = "onyx-dataview onyx-rendered";
+    el.innerHTML = renderDvResult(runDql(this.source, getCachedPages(), this.currentPath));
+    el.addEventListener("mousedown", (e) => {
+      const input = (e.target as HTMLElement)?.closest?.(
+        "input[data-task-path]"
+      ) as HTMLInputElement | null;
+      if (input) {
+        e.preventDefault();
+        const path = input.getAttribute("data-task-path")!;
+        const line = Number(input.getAttribute("data-task-line"));
+        api.toggleTask(path, line).then(() => invalidatePages()).catch(() => {});
+      }
+    });
+    return el;
+  }
+}
+
+export class InlineDqlWidget extends WidgetType {
+  constructor(
+    readonly source: string,
+    readonly version: number,
+    readonly currentPath: string | null
+  ) {
+    super();
+  }
+  eq(o: InlineDqlWidget) {
+    return o.source === this.source && o.version === this.version && o.currentPath === this.currentPath;
+  }
+  toDOM() {
+    const span = document.createElement("span");
+    span.className = "onyx-inline-dql";
+    span.innerHTML = cellHtml(runInline(this.source, getCachedPages(), this.currentPath));
+    return span;
   }
 }
