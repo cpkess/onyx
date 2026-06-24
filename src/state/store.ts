@@ -26,6 +26,8 @@ import {
 
 type Theme = "dark" | "light";
 export type PaletteMode = "files" | "commands" | "semantic";
+export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai";
+export type AiTool = "assist" | "chat" | "tools" | "weave";
 
 interface AppStore {
   vault: VaultInfo | null;
@@ -44,8 +46,9 @@ interface AppStore {
   templatePickerOpen: boolean;
   graphOpen: boolean;
   settingsOpen: boolean;
-  chatOpen: boolean;
-  aiToolsOpen: boolean;
+  sidebarOpen: boolean;
+  sidebarTab: SidebarTab;
+  aiTool: AiTool;
   loading: boolean;
 
   initVault: () => Promise<void>;
@@ -81,8 +84,11 @@ interface AppStore {
   setTemplatePickerOpen: (open: boolean) => void;
   setGraphOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
-  setChatOpen: (open: boolean) => void;
-  setAiToolsOpen: (open: boolean) => void;
+  setSidebarOpen: (open: boolean) => void;
+  toggleSidebar: () => void;
+  setSidebarTab: (tab: SidebarTab) => void;
+  setAiTool: (tool: AiTool) => void;
+  openAiTool: (tool: AiTool) => void;
 }
 
 let vaultInitStarted = false;
@@ -147,8 +153,9 @@ export const useStore = create<AppStore>((set, get) => {
     templatePickerOpen: false,
     graphOpen: false,
     settingsOpen: false,
-    chatOpen: false,
-    aiToolsOpen: false,
+    sidebarOpen: true,
+    sidebarTab: "links",
+    aiTool: "assist",
     loading: false,
 
     initVault: async () => {
@@ -382,7 +389,11 @@ export const useStore = create<AppStore>((set, get) => {
 
     setGraphOpen: (open) => set({ graphOpen: open }),
     setSettingsOpen: (open) => set({ settingsOpen: open }),
-    setChatOpen: (open) => set({ chatOpen: open }),
-    setAiToolsOpen: (open) => set({ aiToolsOpen: open }),
+    setSidebarOpen: (open) => set({ sidebarOpen: open }),
+    toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+    setSidebarTab: (tab) => set({ sidebarTab: tab }),
+    setAiTool: (tool) => set({ aiTool: tool }),
+    openAiTool: (tool) =>
+      set({ sidebarOpen: true, sidebarTab: "ai", aiTool: tool }),
   };
 });

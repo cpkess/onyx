@@ -8,8 +8,6 @@ import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
 import { GraphView } from "./components/GraphView";
 import { Settings } from "./components/Settings";
-import { ChatPanel } from "./components/ChatPanel";
-import { AiTools } from "./components/AiTools";
 import { StatusBar } from "./components/StatusBar";
 import { HoverPreview } from "./components/HoverPreview";
 import { TemplatePicker } from "./components/TemplatePicker";
@@ -22,10 +20,9 @@ function Toolbar() {
   const toggleTheme = useStore((s) => s.toggleTheme);
   const openPalette = useStore((s) => s.openPalette);
   const setGraphOpen = useStore((s) => s.setGraphOpen);
-  const setChatOpen = useStore((s) => s.setChatOpen);
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
-  const setAiToolsOpen = useStore((s) => s.setAiToolsOpen);
-  const chatOpen = useStore((s) => s.chatOpen);
+  const openAiTool = useStore((s) => s.openAiTool);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
 
   return (
     <div className="flex h-10 shrink-0 items-center gap-2 border-b border-black/10 bg-neutral-50 px-3 dark:border-white/10 dark:bg-neutral-900">
@@ -50,18 +47,11 @@ function Toolbar() {
         Graph
       </button>
       <button
-        onClick={() => setChatOpen(!chatOpen)}
+        onClick={() => openAiTool("chat")}
         className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-        title="AI chat (⌘J)"
+        title="AI (chat, tools, weave) — ⌘J"
       >
-        AI Chat
-      </button>
-      <button
-        onClick={() => setAiToolsOpen(true)}
-        className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-        title="Synthesis & subject pages"
-      >
-        AI Tools
+        AI
       </button>
       <button
         onClick={() => setSettingsOpen(true)}
@@ -82,6 +72,13 @@ function Toolbar() {
         className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
       >
         Change vault
+      </button>
+      <button
+        onClick={toggleSidebar}
+        className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+        title="Toggle sidebar (⌘\)"
+      >
+        ⮞
       </button>
     </div>
   );
@@ -112,6 +109,7 @@ function Welcome() {
 export default function App() {
   const vault = useStore((s) => s.vault);
   const panes = useStore((s) => s.panes);
+  const sidebarOpen = useStore((s) => s.sidebarOpen);
   const initVault = useStore((s) => s.initVault);
   const refreshTree = useStore((s) => s.refreshTree);
 
@@ -159,16 +157,16 @@ export default function App() {
             <PaneView key={p.id} pane={p} showSplitBorder={i > 0} />
           ))}
         </main>
-        <aside className="w-64 shrink-0 overflow-hidden border-l border-black/10 bg-neutral-50 dark:border-white/10 dark:bg-neutral-900">
-          <Sidebar />
-        </aside>
-        <ChatPanel />
+        {sidebarOpen && (
+          <aside className="w-72 shrink-0 overflow-hidden border-l border-black/10 bg-neutral-50 dark:border-white/10 dark:bg-neutral-900">
+            <Sidebar />
+          </aside>
+        )}
       </div>
       <StatusBar />
       <CommandPalette />
       <GraphView />
       <Settings />
-      <AiTools />
       <TemplatePicker />
       <HoverPreview />
     </div>

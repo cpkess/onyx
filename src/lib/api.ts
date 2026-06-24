@@ -139,6 +139,7 @@ export const api = {
     invoke<void>("ai_chat", { messages, requestId }),
   aiIndexStatus: () => invoke<number>("ai_index_status"),
   aiIndexVault: () => invoke<number>("ai_index_vault"),
+  aiIndexNote: (path: string) => invoke<boolean>("ai_index_note", { path }),
   aiSemanticSearch: (query: string, k: number) =>
     invoke<SemanticHit[]>("ai_semantic_search", { query, k }),
 
@@ -153,8 +154,14 @@ export const api = {
     invoke<AiDocument>("ai_synthesize", { scopeKind, scopeValue }),
   aiSubjectPage: (subject: string) =>
     invoke<AiDocument>("ai_subject_page", { subject }),
+  aiRegenerate: (path: string) =>
+    invoke<AiDocument>("ai_regenerate", { path }),
   aiRagChat: (messages: ChatMessage[], requestId: string) =>
     invoke<void>("ai_rag_chat", { messages, requestId }),
+  aiComplete: (messages: ChatMessage[]) =>
+    invoke<string>("ai_complete", { messages }),
+  appendToNote: (path: string, heading: string, text: string) =>
+    invoke<void>("append_to_note", { path, heading, text }),
 };
 
 /** Open a native folder picker; returns the chosen path or null. */

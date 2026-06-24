@@ -56,6 +56,30 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// Quote a value as a YAML double-quoted scalar (so it survives round-tripping).
+fn yaml_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Read one flat frontmatter key from a note's content (handles quoted values).
+fn frontmatter_value(content: &str, key: &str) -> Option<String> {
+    let body = content.strip_prefix("---\n")?;
+    let end = body.find("\n---")?;
+    for line in body[..end].lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix(key) {
+            if let Some(v) = rest.trim_start().strip_prefix(':') {
+                let v = v.trim();
+                if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+                    return Some(v[1..v.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\"));
+                }
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Extract the first JSON array found in a model response.
 fn json_array(s: &str) -> Option<Vec<serde_json::Value>> {
     let start = s.find('[')?;
@@ -123,6 +147,67 @@ pub fn create_note(state: State<AppState>, path: String) -> Result<String, Strin
         std::fs::write(&abs, "").map_err(|e| e.to_string())?;
         index::index_note(&ctx.conn, &rel, "", 0).map_err(|e| e.to_string())?;
         Ok(rel)
+    })
+}
+
+/// Run a non-streaming chat completion (used by StreamWeaver for structured output).
+#[tauri::command]
+pub async fn ai_complete(app: AppHandle, messages: Vec<ChatMessage>) -> Result<String, String> {
+    let cfg = ai::load_config(&app);
+    ai::chat_complete(&cfg, messages).await
+}
+
+/// Append `text` under a `## heading` section of a note (creating the note and/or
+/// the section if missing). Used for block distribution and the central Tasks file.
+#[tauri::command]
+pub fn append_to_note(
+    state: State<AppState>,
+    path: String,
+    heading: String,
+    text: String,
+) -> Result<(), String> {
+    with_vault(&state, |ctx| {
+        let mut rel = path.trim().trim_start_matches('/').to_string();
+        if !rel.to_lowercase().ends_with(".md") {
+            rel.push_str(".md");
+        }
+        let abs = vault::resolve(&ctx.root, &rel)?;
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let content = std::fs::read_to_string(&abs).unwrap_or_default();
+        let mut lines: Vec<String> = content.split('\n').map(String::from).collect();
+        let h = heading.trim();
+
+        if h.is_empty() {
+            lines.push(text);
+        } else {
+            let head_line = format!("## {h}");
+            let idx = lines.iter().position(|l| l.trim() == head_line);
+            match idx {
+                Some(i) => {
+                    // Insert before the next heading (end of this section), else at end.
+                    let mut end = lines.len();
+                    for j in (i + 1)..lines.len() {
+                        if lines[j].trim_start().starts_with('#') {
+                            end = j;
+                            break;
+                        }
+                    }
+                    lines.insert(end, text);
+                }
+                None => {
+                    if lines.last().map(|l| !l.is_empty()).unwrap_or(false) {
+                        lines.push(String::new());
+                    }
+                    lines.push(head_line);
+                    lines.push(text);
+                }
+            }
+        }
+        let new_content = lines.join("\n");
+        std::fs::write(&abs, &new_content).map_err(|e| e.to_string())?;
+        index::index_note(&ctx.conn, &rel, &new_content, now_secs()).map_err(|e| e.to_string())
     })
 }
 
@@ -363,6 +448,7 @@ pub fn delete_note(state: State<AppState>, path: String) -> Result<(), String> {
     with_vault(&state, |ctx| {
         let abs = vault::resolve(&ctx.root, &path)?;
         std::fs::remove_file(&abs).map_err(|e| e.to_string())?;
+        let _ = vector::delete_note(&ctx.conn, &path);
         index::remove_note(&ctx.conn, &path).map_err(|e| e.to_string())
     })
 }
@@ -826,11 +912,20 @@ pub async fn ai_synthesize(
     scope_kind: String,
     scope_value: String,
 ) -> Result<AiDocument, String> {
-    let cfg = ai::load_config(&app);
+    synthesize_doc(&app, &state, &scope_kind, &scope_value).await
+}
+
+async fn synthesize_doc(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    scope_kind: &str,
+    scope_value: &str,
+) -> Result<AiDocument, String> {
+    let cfg = ai::load_config(app);
     let (root, notes) = {
         let guard = state.vault.lock().unwrap();
         let ctx = guard.as_ref().ok_or("No vault is open")?;
-        let paths: Vec<String> = match scope_kind.as_str() {
+        let paths: Vec<String> = match scope_kind {
             "tag" => {
                 let tag = scope_value.trim_start_matches('#').to_string();
                 let mut s = ctx
@@ -903,13 +998,18 @@ pub async fn ai_synthesize(
     let label = if scope_value.is_empty() {
         "vault".to_string()
     } else {
-        scope_value.clone()
+        scope_value.to_string()
     };
     let title = format!("Synthesis - {label}");
+    let fm = format!(
+        "---\nonyx_generated: synthesis\nonyx_scope_kind: {}\nonyx_scope_value: {}\n---\n\n",
+        yaml_quote(scope_kind),
+        yaml_quote(scope_value),
+    );
     let header = format!("# {title}\n\n*Synthesized from {used} note(s).*\n\n");
     Ok(AiDocument {
         title,
-        content: header + &body,
+        content: fm + &header + &body,
     })
 }
 
@@ -920,8 +1020,16 @@ pub async fn ai_subject_page(
     state: State<'_, AppState>,
     subject: String,
 ) -> Result<AiDocument, String> {
-    let cfg = ai::load_config(&app);
-    let emb = ai::embed(&cfg, vec![subject.clone()]).await?;
+    subject_doc(&app, &state, &subject).await
+}
+
+async fn subject_doc(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    subject: &str,
+) -> Result<AiDocument, String> {
+    let cfg = ai::load_config(app);
+    let emb = ai::embed(&cfg, vec![subject.to_string()]).await?;
     let q = emb.into_iter().next().ok_or("No embedding returned")?;
 
     let (root, hits, tagged) = {
@@ -980,10 +1088,96 @@ pub async fn ai_subject_page(
         msg("user", format!("Subject: {subject}\n\nSource notes:{corpus}")),
     ];
     let content = ai::chat_complete(&cfg, messages).await?;
+    let fm = format!(
+        "---\nonyx_generated: subject\nonyx_subject: {}\n---\n\n",
+        yaml_quote(subject),
+    );
     Ok(AiDocument {
-        title: subject,
-        content,
+        title: subject.to_string(),
+        content: fm + &content,
     })
+}
+
+/// Re-run the generator that produced an AI page, pulling fresh information from
+/// the vault. Reads the page's `onyx_generated` frontmatter for its parameters.
+#[tauri::command]
+pub async fn ai_regenerate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<AiDocument, String> {
+    let content = {
+        let guard = state.vault.lock().unwrap();
+        let ctx = guard.as_ref().ok_or("No vault is open")?;
+        let abs = vault::resolve(&ctx.root, &path)?;
+        std::fs::read_to_string(&abs).map_err(|e| e.to_string())?
+    };
+    let kind = frontmatter_value(&content, "onyx_generated")
+        .ok_or("This page wasn't generated by Onyx, so there's nothing to regenerate.")?;
+    match kind.as_str() {
+        "synthesis" => {
+            let sk = frontmatter_value(&content, "onyx_scope_kind").unwrap_or_else(|| "all".into());
+            let sv = frontmatter_value(&content, "onyx_scope_value").unwrap_or_default();
+            synthesize_doc(&app, &state, &sk, &sv).await
+        }
+        "subject" => {
+            let subj = frontmatter_value(&content, "onyx_subject")
+                .ok_or("This subject page is missing its subject in frontmatter.")?;
+            subject_doc(&app, &state, &subj).await
+        }
+        other => Err(format!("Unknown generated page kind: {other}")),
+    }
+}
+
+/// Incrementally (re)embed a single note's chunks, replacing its previous
+/// vectors. No-ops unless a vector index already exists and an embed model is
+/// configured — so it keeps an existing index fresh without ever starting one.
+#[tauri::command]
+pub async fn ai_index_note(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<bool, String> {
+    let cfg = ai::load_config(&app);
+    if cfg.embed_model.is_empty() {
+        return Ok(false);
+    }
+    let (root, has_index) = {
+        let guard = state.vault.lock().unwrap();
+        let ctx = guard.as_ref().ok_or("No vault is open")?;
+        (ctx.root.clone(), vector::chunk_count(&ctx.conn) > 0)
+    };
+    if !has_index {
+        return Ok(false);
+    }
+
+    // Read + chunk + embed without holding the lock across the network call.
+    let abs = vault::resolve(&root, &path)?;
+    let content = std::fs::read_to_string(&abs).unwrap_or_default();
+    let chunks = index::chunk_content(&content, 1000);
+    let mut vecs: Vec<(i64, String, Vec<f32>)> = Vec::new();
+    if !chunks.is_empty() {
+        let inputs: Vec<String> = chunks
+            .iter()
+            .map(|(_, t)| format!("{}\n\n{}", index::note_name(&path), t))
+            .collect();
+        let embedded = ai::embed(&cfg, inputs).await?;
+        for ((idx, t), v) in chunks.into_iter().zip(embedded.into_iter()) {
+            vecs.push((idx, t, v));
+        }
+    }
+
+    let dim = vecs.first().map(|x| x.2.len());
+    let guard = state.vault.lock().unwrap();
+    let ctx = guard.as_ref().ok_or("No vault is open")?;
+    if let Some(d) = dim {
+        vector::ensure_table(&ctx.conn, d).map_err(|e| e.to_string())?;
+    }
+    vector::delete_note(&ctx.conn, &path).map_err(|e| e.to_string())?;
+    for (idx, t, v) in &vecs {
+        vector::insert_chunk(&ctx.conn, &path, *idx, t, v).map_err(|e| e.to_string())?;
+    }
+    Ok(true)
 }
 
 /// RAG chat: retrieve relevant chunks, emit `ai-chat:sources`, then stream the

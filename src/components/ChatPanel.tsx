@@ -4,8 +4,6 @@ import { api, noteName, type ChatMessage } from "../lib/api";
 import { useStore } from "../state/store";
 
 export function ChatPanel() {
-  const open = useStore((s) => s.chatOpen);
-  const setOpen = useStore((s) => s.setChatOpen);
   const openSettings = useStore((s) => s.setSettingsOpen);
   const openNote = useStore((s) => s.openNote);
 
@@ -57,8 +55,6 @@ export function ChatPanel() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
 
-  if (!open) return null;
-
   const send = () => {
     const text = input.trim();
     if (!text || streaming) return;
@@ -78,36 +74,25 @@ export function ChatPanel() {
   };
 
   return (
-    <div className="flex h-full w-80 shrink-0 flex-col border-l border-black/10 bg-neutral-50 dark:border-white/10 dark:bg-neutral-900">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-          AI Chat
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setMessages([])}
-            title="Clear"
-            className="rounded px-1.5 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            ⌫
-          </button>
-          <button
-            onClick={() => openSettings(true)}
-            title="AI settings"
-            className="rounded px-1.5 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            ⚙
-          </button>
-          <button
-            onClick={() => setOpen(false)}
-            className="rounded px-1.5 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            ✕
-          </button>
-        </div>
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-end px-2 py-1">
+        <button
+          onClick={() => setMessages([])}
+          title="Clear chat"
+          className="rounded px-1.5 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+        >
+          ⌫
+        </button>
+        <button
+          onClick={() => openSettings(true)}
+          title="AI settings"
+          className="rounded px-1.5 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+        >
+          ⚙
+        </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-2">
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-2 py-2">
         {messages.length === 0 && (
           <p className="px-1 text-xs text-neutral-400">
             Ask anything. Streamed live from your local LM Studio model.

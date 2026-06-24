@@ -1,6 +1,7 @@
 import { openSearchPanel } from "@codemirror/search";
 import { useStore } from "../state/store";
 import { getActiveEditor } from "../editor/activeEditor";
+import { regenerateActivePage } from "../lib/regenerate";
 
 export interface Command {
   id: string;
@@ -50,8 +51,27 @@ export const commands: Command[] = [
     },
   },
   { id: "graph", name: "Open graph view", keys: "mod+g", run: () => s().setGraphOpen(true) },
-  { id: "toggle-chat", name: "Toggle AI chat", keys: "mod+j", run: () => s().setChatOpen(!s().chatOpen) },
-  { id: "ai-tools", name: "AI tools (synthesis, subject pages)", run: () => s().setAiToolsOpen(true) },
+  {
+    id: "toggle-sidebar",
+    name: "Toggle sidebar",
+    keys: "mod+\\",
+    run: () => s().toggleSidebar(),
+  },
+  { id: "ai-chat", name: "AI chat", keys: "mod+j", run: () => s().openAiTool("chat") },
+  { id: "ai-tools", name: "AI tools (synthesis, subject pages)", run: () => s().openAiTool("tools") },
+  {
+    id: "ai-regenerate",
+    name: "AI: Regenerate this page from vault",
+    run: () => {
+      regenerateActivePage().catch((e) => console.error("regenerate failed", e));
+    },
+  },
+  {
+    id: "streamweaver",
+    name: "StreamWeaver: weave current note",
+    keys: "mod+shift+w",
+    run: () => s().openAiTool("weave"),
+  },
   { id: "settings", name: "Open settings", keys: "mod+,", run: () => s().setSettingsOpen(true) },
   { id: "toggle-theme", name: "Toggle dark / light theme", run: () => s().toggleTheme() },
 ];

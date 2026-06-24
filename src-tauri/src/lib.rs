@@ -47,12 +47,16 @@ pub fn run() {
             commands::ai_chat,
             commands::ai_index_status,
             commands::ai_index_vault,
+            commands::ai_index_note,
             commands::ai_semantic_search,
+            commands::ai_complete,
+            commands::append_to_note,
             commands::create_note_with_content,
             commands::ai_suggest_tags,
             commands::ai_suggest_links,
             commands::ai_synthesize,
             commands::ai_subject_page,
+            commands::ai_regenerate,
             commands::ai_rag_chat,
         ])
         .run(tauri::generate_context!())

@@ -20,6 +20,7 @@ import { api, noteName } from "../lib/api";
 import { useStore } from "../state/store";
 import { onyxExtensions, noteNamesFacet } from "./extensions";
 import { setActiveEditor, clearActiveEditor } from "./activeEditor";
+import { queueIndex } from "../lib/autoindex";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
 import { editorModeFacet, type EditorMode } from "./render/core";
 import { ensurePages, onPagesChanged } from "../dataview/pages";
@@ -175,7 +176,10 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
     const scheduleSave = (content: string) => {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
-        api.writeNote(path, content).catch((e) => console.error("save failed", e));
+        api
+          .writeNote(path, content)
+          .then(() => queueIndex(path))
+          .catch((e) => console.error("save failed", e));
       }, 400);
     };
 
@@ -250,7 +254,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
               useStore.getState().setEditorStats(countStats(text));
             }
             if (u.focusChanged && u.view.hasFocus) {
-              setActiveEditor(u.view);
+              setActiveEditor(u.view, path);
               if (paneId) useStore.getState().setActivePane(paneId);
             }
           }),
@@ -258,7 +262,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
       });
       const view = new EditorView({ state, parent: ref.current });
       viewRef.current = view;
-      setActiveEditor(view);
+      setActiveEditor(view, path);
       useStore.getState().setEditorStats(countStats(content));
 
       window.setTimeout(() => {

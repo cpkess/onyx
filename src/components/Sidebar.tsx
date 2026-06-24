@@ -6,14 +6,16 @@ import {
   type LinkSuggestion,
   type SearchResult,
 } from "../lib/api";
-import { useStore } from "../state/store";
+import { useStore, type SidebarTab, type AiTool } from "../state/store";
 import { appendTags, insertText, scrollToHeading } from "../editor/activeEditor";
-
-type Tab = "links" | "outline" | "tags" | "marks" | "ai";
+import { ChatPanel } from "./ChatPanel";
+import { AiTools } from "./AiTools";
+import { WeavePanel } from "./WeavePanel";
 
 export function Sidebar() {
   const activeTab = useStore((s) => s.activeTab);
-  const [tab, setTab] = useState<Tab>("links");
+  const tab = useStore((s) => s.sidebarTab);
+  const setTab = useStore((s) => s.setSidebarTab);
   const [content, setContent] = useState("");
 
   // Load the active note's content once per change (for outline + outgoing).
@@ -29,7 +31,7 @@ export function Sidebar() {
     };
   }, [activeTab]);
 
-  const tabs: [Tab, string][] = [
+  const tabs: [SidebarTab, string][] = [
     ["links", "Links"],
     ["outline", "Outline"],
     ["tags", "Tags"],
@@ -59,7 +61,51 @@ export function Sidebar() {
         {tab === "outline" && <OutlineTab content={content} />}
         {tab === "tags" && <TagsTab />}
         {tab === "marks" && <BookmarksTab />}
-        {tab === "ai" && <AiAssist activeTab={activeTab} />}
+        {tab === "ai" && <AiTab activeTab={activeTab} />}
+      </div>
+    </div>
+  );
+}
+
+// ---- AI tab: sub-tools (Assist / Chat / Tools / Weave) ----
+
+function AiTab({ activeTab }: { activeTab: string | null }) {
+  const tool = useStore((s) => s.aiTool);
+  const setTool = useStore((s) => s.setAiTool);
+
+  const tools: [AiTool, string][] = [
+    ["assist", "Assist"],
+    ["chat", "Chat"],
+    ["tools", "Tools"],
+    ["weave", "Weave"],
+  ];
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 gap-1 px-2 py-1.5">
+        {tools.map(([t, label]) => (
+          <button
+            key={t}
+            onClick={() => setTool(t)}
+            className={`flex-1 rounded-md py-1 text-xs ${
+              tool === t
+                ? "bg-[var(--onyx-accent)] font-medium text-white"
+                : "text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div
+        className={`min-h-0 flex-1 ${
+          tool === "assist" ? "overflow-y-auto" : "overflow-hidden"
+        }`}
+      >
+        {tool === "assist" && <AiAssist activeTab={activeTab} />}
+        {tool === "chat" && <ChatPanel />}
+        {tool === "tools" && <AiTools />}
+        {tool === "weave" && <WeavePanel key={activeTab ?? ""} />}
       </div>
     </div>
   );

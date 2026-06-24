@@ -1,28 +1,53 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
+import { generatedKind, regenerateActivePage, type GeneratedKind } from "../lib/regenerate";
 
 type ScopeKind = "tag" | "folder" | "all";
 
 export function AiTools() {
-  const open = useStore((s) => s.aiToolsOpen);
-  const setOpen = useStore((s) => s.setAiToolsOpen);
   const openNote = useStore((s) => s.openNote);
   const refreshTree = useStore((s) => s.refreshTree);
+  const activeTab = useStore((s) => s.activeTab);
 
   const [scopeKind, setScopeKind] = useState<ScopeKind>("tag");
   const [scopeValue, setScopeValue] = useState("");
   const [subject, setSubject] = useState("");
-  const [busy, setBusy] = useState<"synth" | "subject" | null>(null);
+  const [busy, setBusy] = useState<"synth" | "subject" | "regen" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [genKind, setGenKind] = useState<GeneratedKind | null>(null);
 
-  if (!open) return null;
+  // Detect whether the active note is an AI-generated page (so we can offer to
+  // regenerate it from the current vault).
+  useEffect(() => {
+    setGenKind(null);
+    if (!activeTab) return;
+    let cancelled = false;
+    api
+      .readNote(activeTab)
+      .then((c) => !cancelled && setGenKind(generatedKind(c)))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  const runRegenerate = async () => {
+    setBusy("regen");
+    setError(null);
+    try {
+      await regenerateActivePage();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const createAndOpen = async (title: string, content: string) => {
     const rel = await api.createNoteWithContent(title, content);
     await refreshTree();
     openNote(rel);
-    setOpen(false);
   };
 
   const runSynthesis = async () => {
@@ -61,29 +86,30 @@ export function AiTools() {
     "rounded-md bg-[var(--onyx-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[10vh]"
-      onClick={() => setOpen(false)}
-    >
-      <div
-        className="w-[34rem] max-w-[92vw] rounded-xl bg-white p-6 shadow-2xl ring-1 ring-black/10 dark:bg-neutral-800 dark:ring-white/10"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-neutral-900 dark:text-white">
-            AI Tools
-          </h2>
-          <button
-            onClick={() => setOpen(false)}
-            className="rounded px-2 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10"
-          >
-            ✕
-          </button>
-        </div>
+    <div className="h-full overflow-y-auto px-2 py-2">
+      {error && <p className="mb-3 text-sm text-red-500">{error}</p>}
+      <div className="space-y-4">
+          {/* Regenerate (only for AI-generated pages) */}
+          {genKind && (
+            <div className="rounded-lg border border-[var(--onyx-accent)]/40 bg-[var(--onyx-accent)]/5 p-4">
+              <h3 className="mb-1 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                Regenerate page
+              </h3>
+              <p className="mb-3 text-xs text-neutral-400">
+                This {genKind === "subject" ? "subject" : "synthesis"} page was generated
+                by Onyx. Regenerate it to pull in the latest from your vault (the body is
+                rewritten; the page settings are kept).
+              </p>
+              <button
+                onClick={runRegenerate}
+                disabled={busy !== null}
+                className={primary}
+              >
+                {busy === "regen" ? "Regenerating…" : "Regenerate from vault"}
+              </button>
+            </div>
+          )}
 
-        {error && <p className="mb-3 text-sm text-red-500">{error}</p>}
-
-        <div className="space-y-5">
           {/* Synthesize */}
           <div className="rounded-lg border border-black/10 p-4 dark:border-white/10">
             <h3 className="mb-1 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
@@ -147,7 +173,6 @@ export function AiTools() {
               {busy === "subject" ? "Writing…" : "Generate page"}
             </button>
           </div>
-        </div>
       </div>
     </div>
   );

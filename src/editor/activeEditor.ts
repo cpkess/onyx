@@ -5,13 +5,18 @@ import { EditorView } from "@codemirror/view";
  * the live buffer (keeping the editor authoritative; autosave persists it).
  */
 let active: EditorView | null = null;
+let activePath: string | null = null;
 
-export function setActiveEditor(view: EditorView | null) {
+export function setActiveEditor(view: EditorView | null, path?: string | null) {
   active = view;
+  if (path !== undefined) activePath = path;
 }
 
 export function clearActiveEditor(view: EditorView) {
-  if (active === view) active = null;
+  if (active === view) {
+    active = null;
+    activePath = null;
+  }
 }
 
 export function hasActiveEditor(): boolean {
@@ -20,6 +25,23 @@ export function hasActiveEditor(): boolean {
 
 export function getActiveEditor(): EditorView | null {
   return active;
+}
+
+/** Path of the note currently in the active editor, if known. */
+export function getActiveEditorPath(): string | null {
+  return activePath;
+}
+
+/**
+ * Replace the whole document of the active editor, but only if it's showing
+ * `path`. Returns true if it replaced (which triggers autosave + reindex).
+ */
+export function replaceActiveDoc(path: string, content: string): boolean {
+  if (!active || activePath !== path) return false;
+  active.dispatch({
+    changes: { from: 0, to: active.state.doc.length, insert: content },
+  });
+  return true;
 }
 
 /** Scroll the active editor to a heading by its text. */

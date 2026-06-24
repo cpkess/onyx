@@ -53,6 +53,41 @@ pub fn reset_table(conn: &Connection, dim: usize) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Ensure the chunk vector table exists for the given dimension, without
+/// clearing existing data. Used by incremental (single-note) indexing.
+pub fn ensure_table(conn: &Connection, dim: usize) -> rusqlite::Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS vec_meta(key TEXT PRIMARY KEY, value INTEGER)",
+        [],
+    )?;
+    conn.execute(
+        &format!(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+                embedding float[{dim}],
+                note_path text,
+                chunk_index integer,
+                +chunk_text text
+            )"
+        ),
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO vec_meta(key, value) VALUES('dim', ?1)",
+        params![dim as i64],
+    )?;
+    Ok(())
+}
+
+/// Remove all stored chunks for a note (used before re-embedding it, and on
+/// delete/rename). No-op if the table doesn't exist yet.
+pub fn delete_note(conn: &Connection, path: &str) -> rusqlite::Result<()> {
+    if chunk_count(conn) == 0 {
+        return Ok(());
+    }
+    conn.execute("DELETE FROM vec_chunks WHERE note_path = ?1", params![path])?;
+    Ok(())
+}
+
 /// Insert a single embedded chunk.
 pub fn insert_chunk(
     conn: &Connection,
@@ -139,5 +174,25 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "a.md");
         assert_eq!(hits[0].text, "apple");
+    }
+
+    #[test]
+    fn incremental_upsert() {
+        INIT.call_once(register);
+        let conn = Connection::open_in_memory().unwrap();
+        // ensure_table works on a fresh db without clearing.
+        ensure_table(&conn, 3).unwrap();
+        insert_chunk(&conn, "a.md", 0, "apple", &[1.0, 0.0, 0.0]).unwrap();
+        insert_chunk(&conn, "a.md", 1, "apricot", &[0.9, 0.1, 0.0]).unwrap();
+        insert_chunk(&conn, "b.md", 0, "banana", &[0.0, 1.0, 0.0]).unwrap();
+        assert_eq!(chunk_count(&conn), 3);
+
+        // Re-embedding a.md replaces only its chunks.
+        delete_note(&conn, "a.md").unwrap();
+        assert_eq!(chunk_count(&conn), 1);
+        insert_chunk(&conn, "a.md", 0, "avocado", &[1.0, 0.0, 0.0]).unwrap();
+        assert_eq!(chunk_count(&conn), 2);
+        let hits = search(&conn, &[0.95, 0.05, 0.0], 1).unwrap();
+        assert_eq!(hits[0].text, "avocado");
     }
 }
