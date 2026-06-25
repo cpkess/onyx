@@ -156,6 +156,8 @@ export const api = {
     invoke<AiDocument>("ai_subject_page", { subject }),
   aiRegenerate: (path: string) =>
     invoke<AiDocument>("ai_regenerate", { path }),
+  aiComposeSections: (path: string) =>
+    invoke<AiDocument>("ai_compose_sections", { path }),
   aiRagChat: (messages: ChatMessage[], requestId: string) =>
     invoke<void>("ai_rag_chat", { messages, requestId }),
   aiComplete: (messages: ChatMessage[]) =>

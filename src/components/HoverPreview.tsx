@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { renderMarkdown } from "../editor/render/markdown";
+import { enhanceRendered } from "../editor/render/enhance";
 
 interface Preview {
   x: number;
@@ -11,6 +12,11 @@ interface Preview {
 export function HoverPreview() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (preview && boxRef.current) enhanceRendered(boxRef.current);
+  }, [preview]);
 
   useEffect(() => {
     const onOver = (e: MouseEvent) => {
@@ -52,6 +58,7 @@ export function HoverPreview() {
   if (!preview) return null;
   return (
     <div
+      ref={boxRef}
       className="onyx-rendered fixed z-[70] max-h-80 w-[26rem] overflow-auto rounded-lg border border-black/10 bg-white p-4 text-sm shadow-2xl ring-1 ring-black/5 dark:border-white/10 dark:bg-neutral-800 dark:ring-white/10"
       style={{ left: preview.x, top: preview.y }}
       onMouseLeave={() => setPreview(null)}

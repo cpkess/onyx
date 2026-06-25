@@ -18,6 +18,10 @@ dist-ssr
 *.db-wal
 *.db-shm
 
+# Tauri updater signing keys — NEVER commit these
+*.key
+*.key.pub
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

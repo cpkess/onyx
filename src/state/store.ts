@@ -9,6 +9,7 @@ import {
   substituteTemplate,
 } from "../settings";
 import { setHotkeyOverrides } from "../commands/registry";
+import { invalidatePages } from "../dataview/pages";
 import {
   type Pane,
   type Workspace,
@@ -26,7 +27,7 @@ import {
 
 type Theme = "dark" | "light";
 export type PaletteMode = "files" | "commands" | "semantic";
-export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai";
+export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai" | "calendar";
 export type AiTool = "assist" | "chat" | "tools" | "weave";
 
 interface AppStore {
@@ -80,7 +81,7 @@ interface AppStore {
   setSettings: (partial: Partial<Settings>) => void;
   toggleBookmark: (path: string) => void;
   newNote: () => Promise<void>;
-  openDailyNote: () => Promise<void>;
+  openDailyNote: (date?: Date) => Promise<void>;
   setTemplatePickerOpen: (open: boolean) => void;
   setGraphOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
@@ -364,9 +365,9 @@ export const useStore = create<AppStore>((set, get) => {
       await get().createAndOpen(folder ? `${folder}/Untitled` : "Untitled");
     },
 
-    openDailyNote: async () => {
+    openDailyNote: async (date = new Date()) => {
       const s2 = get().settings;
-      const fname = formatDate(s2.dailyFormat || "YYYY-MM-DD");
+      const fname = formatDate(s2.dailyFormat || "YYYY-MM-DD", date);
       const existing = await api.resolveLink(fname).catch(() => null);
       if (existing) return get().openNote(existing);
       let content = "";
@@ -379,6 +380,7 @@ export const useStore = create<AppStore>((set, get) => {
       try {
         const newRel = await api.createNoteWithContent(rel, content);
         await get().refreshTree();
+        invalidatePages();
         get().openNote(newRel);
       } catch (e) {
         alert(`Could not create daily note: ${e}`);

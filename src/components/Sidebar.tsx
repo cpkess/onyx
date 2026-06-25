@@ -11,6 +11,7 @@ import { appendTags, insertText, scrollToHeading } from "../editor/activeEditor"
 import { ChatPanel } from "./ChatPanel";
 import { AiTools } from "./AiTools";
 import { WeavePanel } from "./WeavePanel";
+import { CalendarTab } from "./CalendarTab";
 
 export function Sidebar() {
   const activeTab = useStore((s) => s.activeTab);
@@ -37,6 +38,7 @@ export function Sidebar() {
     ["tags", "Tags"],
     ["marks", "★"],
     ["ai", "AI"],
+    ["calendar", "📅"],
   ];
 
   return (
@@ -62,6 +64,7 @@ export function Sidebar() {
         {tab === "tags" && <TagsTab />}
         {tab === "marks" && <BookmarksTab />}
         {tab === "ai" && <AiTab activeTab={activeTab} />}
+        {tab === "calendar" && <CalendarTab />}
       </div>
     </div>
   );

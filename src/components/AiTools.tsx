@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
 import { generatedKind, regenerateActivePage, type GeneratedKind } from "../lib/regenerate";
+import { hasHcm, composeActivePage } from "../lib/compose";
 
 type ScopeKind = "tag" | "folder" | "all";
 
@@ -13,24 +15,42 @@ export function AiTools() {
   const [scopeKind, setScopeKind] = useState<ScopeKind>("tag");
   const [scopeValue, setScopeValue] = useState("");
   const [subject, setSubject] = useState("");
-  const [busy, setBusy] = useState<"synth" | "subject" | "regen" | null>(null);
+  const [busy, setBusy] = useState<"synth" | "subject" | "regen" | "compose" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [genKind, setGenKind] = useState<GeneratedKind | null>(null);
+  const [hcm, setHcm] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
-  // Detect whether the active note is an AI-generated page (so we can offer to
-  // regenerate it from the current vault).
+  // Detect whether the active note is an AI-generated page and/or carries HCM
+  // blocks (so we can offer to regenerate or compose it).
   useEffect(() => {
     setGenKind(null);
+    setHcm(false);
     if (!activeTab) return;
     let cancelled = false;
     api
       .readNote(activeTab)
-      .then((c) => !cancelled && setGenKind(generatedKind(c)))
+      .then((c) => {
+        if (cancelled) return;
+        setGenKind(generatedKind(c));
+        setHcm(hasHcm(c));
+      })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [activeTab]);
+
+  // Section-compose progress.
+  useEffect(() => {
+    const un = [
+      listen<{ done: number; total: number }>("ai-compose:progress", (e) =>
+        setProgress(e.payload)
+      ),
+      listen("ai-compose:done", () => setProgress(null)),
+    ];
+    return () => un.forEach((u) => u.then((f) => f()));
+  }, []);
 
   const runRegenerate = async () => {
     setBusy("regen");
@@ -41,6 +61,20 @@ export function AiTools() {
       setError(String(e));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const runCompose = async () => {
+    setBusy("compose");
+    setError(null);
+    setProgress(null);
+    try {
+      await composeActivePage();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+      setProgress(null);
     }
   };
 
@@ -106,6 +140,31 @@ export function AiTools() {
                 className={primary}
               >
                 {busy === "regen" ? "Regenerating…" : "Regenerate from vault"}
+              </button>
+            </div>
+          )}
+
+          {/* Compose sections from HCM (only for pages with <!--ai--> blocks) */}
+          {hcm && (
+            <div className="rounded-lg border border-[var(--onyx-accent)]/40 bg-[var(--onyx-accent)]/5 p-4">
+              <h3 className="mb-1 text-sm font-semibold text-neutral-800 dark:text-neutral-100">
+                Compose with AI context
+              </h3>
+              <p className="mb-3 text-xs text-neutral-400">
+                This page has ✨ AI-context blocks. Compose regenerates only those
+                sections from their instructions (inheriting parent context, grounded
+                in your vault); other sections stay untouched.
+              </p>
+              <button
+                onClick={runCompose}
+                disabled={busy !== null}
+                className={primary}
+              >
+                {busy === "compose"
+                  ? progress
+                    ? `Composing ${progress.done}/${progress.total}…`
+                    : "Composing…"
+                  : "Compose sections"}
               </button>
             </div>
           )}

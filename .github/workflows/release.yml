@@ -1,0 +1,44 @@
+name: Release
+
+# Push a version tag (e.g. v0.2.0) to build, sign, and publish a macOS release
+# with the updater artifacts (.app.tar.gz + .sig) and latest.json.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: macos-14 # Apple Silicon
+    permissions:
+      contents: write # create the GitHub Release + upload assets
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Onyx ${{ github.ref_name }}"
+          releaseDraft: false
+          prerelease: false
+          args: --target aarch64-apple-darwin

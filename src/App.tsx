@@ -11,6 +11,7 @@ import { Settings } from "./components/Settings";
 import { StatusBar } from "./components/StatusBar";
 import { HoverPreview } from "./components/HoverPreview";
 import { TemplatePicker } from "./components/TemplatePicker";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { runHotkey } from "./commands/registry";
 import { invalidatePages } from "./dataview/pages";
 
@@ -169,6 +170,7 @@ export default function App() {
       <Settings />
       <TemplatePicker />
       <HoverPreview />
+      <UpdateBanner />
     </div>
   );
 }

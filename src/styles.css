@@ -114,6 +114,90 @@ body {
   font-family: inherit;
 }
 
+/* Rendered-markdown body (AI chat, hover previews, embeds): match reading view. */
+.onyx-rendered > :first-child {
+  margin-top: 0;
+}
+.onyx-rendered > :last-child {
+  margin-bottom: 0;
+}
+.onyx-rendered p {
+  margin: 0.5em 0;
+  line-height: 1.6;
+}
+.onyx-rendered h1,
+.onyx-rendered h2,
+.onyx-rendered h3,
+.onyx-rendered h4 {
+  margin: 0.7em 0 0.3em;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.onyx-rendered h1 { font-size: 1.5em; }
+.onyx-rendered h2 { font-size: 1.3em; }
+.onyx-rendered h3 { font-size: 1.12em; }
+.onyx-rendered ul,
+.onyx-rendered ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.onyx-rendered li { margin: 0.15em 0; }
+.onyx-rendered li.onyx-task {
+  list-style: none;
+  margin-left: -1.2em;
+}
+.onyx-rendered li.onyx-task input {
+  margin-right: 0.4em;
+  vertical-align: middle;
+}
+.onyx-rendered blockquote {
+  margin: 0.5em 0;
+  padding: 0.1em 0.9em;
+  border-left: 3px solid color-mix(in srgb, currentColor 25%, transparent);
+  opacity: 0.85;
+}
+.onyx-rendered code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  padding: 0.1em 0.32em;
+  border-radius: 4px;
+}
+.onyx-rendered pre {
+  margin: 0.5em 0;
+  padding: 0.7em 0.9em;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  overflow-x: auto;
+}
+.onyx-rendered pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.onyx-rendered table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.92em;
+}
+.onyx-rendered th,
+.onyx-rendered td {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  padding: 0.3em 0.6em;
+}
+.onyx-rendered th {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+.onyx-rendered hr {
+  border: none;
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  margin: 0.8em 0;
+}
+.onyx-rendered img {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Callouts */
 .onyx-callout {
   border: 1px solid color-mix(in srgb, var(--callout, #7c6cff) 35%, transparent);
@@ -255,6 +339,7 @@ body {
 
 /* Math & diagrams */
 .onyx-math-block {
+  display: block;
   text-align: center;
   margin: 0.5em 0;
   overflow-x: auto;
@@ -314,6 +399,25 @@ body {
   min-width: 8rem;
   font-weight: 600;
   opacity: 0.65;
+}
+
+/* Hierarchical Context Metadata (HCM) "AI context" badge */
+.onyx-hcm {
+  display: inline-block;
+  margin: 0.1em 0 0.4em;
+  padding: 0.05em 0.5em;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  user-select: none;
+  color: var(--onyx-accent);
+  background: color-mix(in srgb, var(--onyx-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--onyx-accent) 35%, transparent);
+}
+.onyx-hcm:hover {
+  background: color-mix(in srgb, var(--onyx-accent) 20%, transparent);
 }
 
 /* WYSIWYG table editor */

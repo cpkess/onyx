@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, noteName, type ChatMessage } from "../lib/api";
 import { useStore } from "../state/store";
+import { renderMarkdown } from "../editor/render/markdown";
+import { enhanceRendered } from "../editor/render/enhance";
 
 export function ChatPanel() {
   const openSettings = useStore((s) => s.setSettingsOpen);
@@ -92,7 +94,19 @@ export function ChatPanel() {
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-2 py-2">
+      <div
+        ref={scrollRef}
+        className="flex-1 space-y-3 overflow-y-auto px-2 py-2"
+        onClick={(e) => {
+          const el = (e.target as HTMLElement).closest?.("[data-wikilink]");
+          const name = el?.getAttribute("data-wikilink");
+          if (!name) return;
+          api
+            .resolveLink(name)
+            .then((p) => p && openNote(p))
+            .catch(() => {});
+        }}
+      >
         {messages.length === 0 && (
           <p className="px-1 text-xs text-neutral-400">
             Ask anything. Streamed live from your local LM Studio model.
@@ -110,9 +124,14 @@ export function ChatPanel() {
             <div className="mb-0.5 text-[10px] uppercase tracking-wide text-neutral-400">
               {m.role}
             </div>
-            <div className="whitespace-pre-wrap break-words">
-              {m.content || (streaming && i === messages.length - 1 ? "…" : "")}
-            </div>
+            {m.role === "assistant" ? (
+              <RenderedMessage
+                content={m.content}
+                streaming={streaming && i === messages.length - 1}
+              />
+            ) : (
+              <div className="whitespace-pre-wrap break-words">{m.content}</div>
+            )}
           </div>
         ))}
         {sources.length > 0 && (
@@ -160,5 +179,51 @@ export function ChatPanel() {
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * An assistant message rendered as markdown. While streaming, the markdown
+ * re-render is throttled (~80ms) to keep the stream smooth; the heavier KaTeX +
+ * mermaid pass runs only once the message is complete.
+ */
+function RenderedMessage({ content, streaming }: { content: string; streaming: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [throttled, setThrottled] = useState(content);
+  const lastFlush = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!streaming) {
+      setThrottled(content);
+      return;
+    }
+    const since = Date.now() - lastFlush.current;
+    if (since >= 80) {
+      lastFlush.current = Date.now();
+      setThrottled(content);
+    } else {
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => {
+        lastFlush.current = Date.now();
+        setThrottled(content);
+      }, 80 - since);
+      return () => window.clearTimeout(timer.current);
+    }
+  }, [content, streaming]);
+
+  const html = useMemo(() => renderMarkdown(throttled || ""), [throttled]);
+
+  useEffect(() => {
+    if (!streaming && ref.current) enhanceRendered(ref.current);
+  }, [html, streaming]);
+
+  if (!throttled) return <div className="text-neutral-400">…</div>;
+  return (
+    <div
+      ref={ref}
+      className="onyx-rendered break-words"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }

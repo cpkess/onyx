@@ -20,6 +20,7 @@ import { api, noteName } from "../lib/api";
 import { useStore } from "../state/store";
 import { onyxExtensions, noteNamesFacet } from "./extensions";
 import { setActiveEditor, clearActiveEditor } from "./activeEditor";
+import { EditorToolbar } from "./EditorToolbar";
 import { queueIndex } from "../lib/autoindex";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
 import { editorModeFacet, type EditorMode } from "./render/core";
@@ -324,6 +325,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
           ))}
         </div>
       </div>
+      <EditorToolbar path={path} />
       <div ref={ref} className="min-h-0 flex-1" />
     </div>
   );

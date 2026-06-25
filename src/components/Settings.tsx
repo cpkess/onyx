@@ -4,8 +4,10 @@ import { api, type AiConfig } from "../lib/api";
 import { useStore } from "../state/store";
 import { commands, effectiveKeys, eventToCombo } from "../commands/registry";
 import type { EditorMode } from "../editor/render/core";
+import type { Update } from "@tauri-apps/plugin-updater";
+import { currentVersion, checkForUpdate, installUpdate } from "../lib/updater";
 
-type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai";
+type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai" | "about";
 
 const field =
   "w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[var(--onyx-accent)] dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-100";
@@ -25,6 +27,7 @@ export function Settings() {
     ["daily", "Daily notes"],
     ["hotkeys", "Hotkeys"],
     ["ai", "AI (LM Studio)"],
+    ["about", "Updates"],
   ];
 
   return (
@@ -69,6 +72,7 @@ export function Settings() {
           {tab === "daily" && <Daily />}
           {tab === "hotkeys" && <Hotkeys />}
           {tab === "ai" && <AiSettings />}
+          {tab === "about" && <About />}
         </div>
       </div>
     </div>
@@ -120,6 +124,11 @@ function Appearance() {
         label="Readable line length"
         checked={settings.readableWidth}
         onChange={(v) => setSettings({ readableWidth: v })}
+      />
+      <Checkbox
+        label="Show formatting toolbar (⌘⇧B)"
+        checked={settings.showFormattingToolbar}
+        onChange={(v) => setSettings({ showFormattingToolbar: v })}
       />
     </div>
   );
@@ -212,6 +221,89 @@ function Daily() {
           onChange={(e) => setSettings({ dailyTemplate: e.target.value })}
           placeholder="templates/Daily.md"
         />
+      </Row>
+      <Row>
+        <label className={label}>Calendar week starts on</label>
+        <select
+          className={field}
+          value={settings.weekStart}
+          onChange={(e) => setSettings({ weekStart: Number(e.target.value) as 0 | 1 })}
+        >
+          <option value={0}>Sunday</option>
+          <option value={1}>Monday</option>
+        </select>
+      </Row>
+    </div>
+  );
+}
+
+function About() {
+  const [version, setVersion] = useState("…");
+  const [status, setStatus] = useState<string | null>(null);
+  const [update, setUpdate] = useState<Update | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+
+  useEffect(() => {
+    currentVersion().then(setVersion);
+  }, []);
+
+  const check = async () => {
+    setBusy(true);
+    setStatus(null);
+    setUpdate(null);
+    const u = await checkForUpdate();
+    setBusy(false);
+    if (u) {
+      setUpdate(u);
+      setStatus(`Onyx ${u.version} is available.`);
+    } else {
+      setStatus("You're up to date.");
+    }
+  };
+
+  const install = async () => {
+    if (!update) return;
+    setBusy(true);
+    try {
+      await installUpdate(update, setProgress); // relaunches on success
+    } catch (e) {
+      setStatus(`Update failed: ${e}`);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <Row>
+        <label className={label}>Current version</label>
+        <p className="text-sm text-neutral-700 dark:text-neutral-200">Onyx {version}</p>
+      </Row>
+      <Row>
+        {update ? (
+          <button
+            onClick={install}
+            disabled={busy}
+            className="rounded-md bg-[var(--onyx-accent)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+          >
+            {busy
+              ? progress === null
+                ? "Downloading…"
+                : progress >= 1
+                  ? "Installing…"
+                  : `Downloading ${Math.round(progress * 100)}%`
+              : `Install ${update.version} & restart`}
+          </button>
+        ) : (
+          <button
+            onClick={check}
+            disabled={busy}
+            className="rounded-md bg-black/5 px-3 py-1.5 text-sm text-neutral-700 hover:bg-black/10 disabled:opacity-40 dark:bg-white/10 dark:text-neutral-200"
+          >
+            {busy ? "Checking…" : "Check for updates"}
+          </button>
+        )}
+        {status && <p className="mt-2 text-xs text-neutral-500">{status}</p>}
       </Row>
     </div>
   );

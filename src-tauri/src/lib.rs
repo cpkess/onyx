@@ -14,6 +14,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_last_vault,
@@ -57,6 +59,7 @@ pub fn run() {
             commands::ai_synthesize,
             commands::ai_subject_page,
             commands::ai_regenerate,
+            commands::ai_compose_sections,
             commands::ai_rag_chat,
         ])
         .run(tauri::generate_context!())

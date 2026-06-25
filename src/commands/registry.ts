@@ -1,7 +1,14 @@
 import { openSearchPanel } from "@codemirror/search";
 import { useStore } from "../state/store";
-import { getActiveEditor } from "../editor/activeEditor";
+import {
+  getActiveEditor,
+  insertHcmBlock,
+  wrapSelection,
+  insertSnippet,
+} from "../editor/activeEditor";
 import { regenerateActivePage } from "../lib/regenerate";
+import { composeActivePage } from "../lib/compose";
+import { manualUpdateCheck } from "../lib/updater";
 
 export interface Command {
   id: string;
@@ -52,6 +59,15 @@ export const commands: Command[] = [
   },
   { id: "graph", name: "Open graph view", keys: "mod+g", run: () => s().setGraphOpen(true) },
   {
+    id: "open-calendar",
+    name: "Open calendar",
+    keys: "mod+shift+c",
+    run: () => {
+      s().setSidebarOpen(true);
+      s().setSidebarTab("calendar");
+    },
+  },
+  {
     id: "toggle-sidebar",
     name: "Toggle sidebar",
     keys: "mod+\\",
@@ -67,12 +83,40 @@ export const commands: Command[] = [
     },
   },
   {
+    id: "ai-compose",
+    name: "AI: Compose sections from AI context (HCM)",
+    run: () => {
+      composeActivePage().catch((e) => console.error("compose failed", e));
+    },
+  },
+  {
+    id: "hcm-insert",
+    name: "Insert AI context block (HCM)",
+    run: () => insertHcmBlock(),
+  },
+  {
+    id: "toggle-toolbar",
+    name: "Toggle formatting toolbar",
+    keys: "mod+shift+b",
+    run: () =>
+      s().setSettings({ showFormattingToolbar: !s().settings.showFormattingToolbar }),
+  },
+  { id: "format-bold", name: "Format: bold", keys: "mod+b", run: () => wrapSelection("**") },
+  { id: "format-italic", name: "Format: italic", keys: "mod+i", run: () => wrapSelection("*") },
+  {
+    id: "insert-wikilink",
+    name: "Insert wikilink [[ ]]",
+    keys: "mod+shift+k",
+    run: () => insertSnippet("[[]]", 2),
+  },
+  {
     id: "streamweaver",
     name: "StreamWeaver: weave current note",
     keys: "mod+shift+w",
     run: () => s().openAiTool("weave"),
   },
   { id: "settings", name: "Open settings", keys: "mod+,", run: () => s().setSettingsOpen(true) },
+  { id: "check-updates", name: "Check for updates", run: () => void manualUpdateCheck() },
   { id: "toggle-theme", name: "Toggle dark / light theme", run: () => s().toggleTheme() },
 ];
 

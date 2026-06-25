@@ -989,7 +989,9 @@ async fn synthesize_doc(
             "You are a research analyst. Synthesize the provided notes into a concise markdown \
              brief with sections: Overview, Key Themes, Connections, Contradictions/Tensions, \
              Open Questions. Reference notes with [[Note Title]] wikilinks where relevant. Do not \
-             invent facts beyond the notes."
+             invent facts beyond the notes. Directly under each `##` heading, add an HTML comment \
+             of the form `<!--ai\n<one sentence on what this section should contain>\n-->` so the \
+             page can be regenerated section-by-section later."
                 .to_string(),
         ),
         msg("user", format!("Notes to synthesize:{corpus}")),
@@ -1082,7 +1084,9 @@ async fn subject_doc(
             "You write encyclopedic, Wikipedia-style subject pages STRICTLY from the supplied \
              notes. Use markdown headings. Cite supporting notes inline as [[Note Title]]. Do not \
              invent facts not present in the notes. End with a 'Sources' section listing the \
-             [[Note Title]] links you used."
+             [[Note Title]] links you used. Directly under each `##` heading, add an HTML comment of \
+             the form `<!--ai\n<one sentence on what this section should contain>\n-->` so the page \
+             can be regenerated section-by-section later."
                 .to_string(),
         ),
         msg("user", format!("Subject: {subject}\n\nSource notes:{corpus}")),
@@ -1127,6 +1131,176 @@ pub async fn ai_regenerate(
         }
         other => Err(format!("Unknown generated page kind: {other}")),
     }
+}
+
+const COMPOSE_SYSTEM: &str =
+    "You are composing ONE section of an existing markdown document. Output ONLY the markdown body \
+     for this section — do NOT repeat the section heading, and do NOT include any <!--ai ... --> \
+     comment. Follow the section's instruction exactly, including any required sub-structure \
+     (sub-headings, lists, tables). Where relevant, cite vault notes as [[Note Title]]. Use the \
+     supplied material and related notes; do not invent facts beyond them. Keep formatting clean.";
+
+/// Retrieve related vault notes for grounding a section. Best-effort: returns an
+/// empty string if there's no embed model or no existing vector index.
+async fn gather_grounding(
+    state: &State<'_, AppState>,
+    cfg: &AiConfig,
+    root: &std::path::Path,
+    query: &str,
+) -> String {
+    if cfg.embed_model.is_empty() {
+        return String::new();
+    }
+    let emb = match ai::embed(cfg, vec![query.to_string()]).await {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    let q = match emb.into_iter().next() {
+        Some(q) => q,
+        None => return String::new(),
+    };
+    let hits = {
+        let guard = state.vault.lock().unwrap();
+        let ctx = match guard.as_ref() {
+            Some(c) => c,
+            None => return String::new(),
+        };
+        match vector::search(&ctx.conn, &q, 8) {
+            Ok(h) => h,
+            Err(_) => return String::new(),
+        }
+    };
+    let mut corpus = String::new();
+    let mut seen = HashSet::new();
+    for h in hits {
+        if !seen.insert(h.path.clone()) {
+            continue;
+        }
+        if let Ok(abs) = vault::resolve(root, &h.path) {
+            if let Ok(c) = std::fs::read_to_string(&abs) {
+                corpus.push_str(&format!("\n\n### {}\n{}", index::note_name(&h.path), truncate(&c, 800)));
+            }
+        }
+    }
+    corpus
+}
+
+/// Strip a leading heading line from model output if it just repeats the
+/// section's own heading (models sometimes echo it back).
+fn clean_section_body(raw: &str, title: &str) -> String {
+    let nb = raw.trim();
+    let mut iter = nb.lines();
+    if let Some(first) = iter.next() {
+        let f = first.trim_start();
+        if f.starts_with('#') && f.trim_start_matches('#').trim().eq_ignore_ascii_case(title) {
+            return iter.collect::<Vec<_>>().join("\n").trim_start().to_string();
+        }
+    }
+    nb.to_string()
+}
+
+/// Hierarchical Context Metadata (HCM): walk the note's heading sections and
+/// regenerate the body of each section that carries an `<!--ai … -->`
+/// instruction, inheriting parent instructions and grounding in related notes.
+/// Sections without an instruction are preserved byte-for-byte.
+#[tauri::command]
+pub async fn ai_compose_sections(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<AiDocument, String> {
+    let cfg = ai::load_config(&app);
+    let (root, content) = {
+        let guard = state.vault.lock().unwrap();
+        let ctx = guard.as_ref().ok_or("No vault is open")?;
+        let abs = vault::resolve(&ctx.root, &path)?;
+        (ctx.root.clone(), std::fs::read_to_string(&abs).map_err(|e| e.to_string())?)
+    };
+
+    let sections = index::parse_sections(&content);
+    let lines: Vec<&str> = content.split('\n').collect();
+    let targets: Vec<usize> = sections
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.instruction.is_some())
+        .map(|(i, _)| i)
+        .collect();
+    if targets.is_empty() {
+        return Err("This page has no AI context (<!--ai … -->) blocks to compose.".into());
+    }
+    let total = targets.len();
+
+    let outline = sections
+        .iter()
+        .map(|s| format!("{} {}", "#".repeat(s.level), s.title))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut new_bodies: Vec<Option<String>> = vec![None; sections.len()];
+    let mut done = 0usize;
+    for &i in &targets {
+        let sec = &sections[i];
+        let instruction = sec.instruction.clone().unwrap_or_default();
+        let inherited = index::ancestors(&sections, i);
+        let material = lines[sec.body_start..sec.body_end].join("\n");
+        let corpus = gather_grounding(&state, &cfg, &root, &format!("{}\n{}", sec.title, instruction)).await;
+
+        let mut user = format!("Document outline:\n{outline}\n\n");
+        if !inherited.is_empty() {
+            user.push_str(&format!(
+                "Inherited context from parent sections:\n{}\n\n",
+                inherited.join("\n")
+            ));
+        }
+        user.push_str(&format!(
+            "Section to compose: {} {}\n\nInstruction:\n{}\n\n",
+            "#".repeat(sec.level),
+            sec.title,
+            instruction
+        ));
+        if !corpus.is_empty() {
+            user.push_str(&format!("Related notes from the vault:{corpus}\n\n"));
+        }
+        user.push_str(&format!(
+            "Current material under this section (transform per the instruction):\n{}",
+            truncate(&material, 4000)
+        ));
+
+        let messages = vec![msg("system", COMPOSE_SYSTEM.to_string()), msg("user", user)];
+        let raw = ai::chat_complete(&cfg, messages).await?;
+        new_bodies[i] = Some(clean_section_body(&raw, &sec.title));
+        done += 1;
+        let _ = app.emit("ai-compose:progress", serde_json::json!({ "done": done, "total": total }));
+    }
+
+    // Reconstruct: preamble + each section's (heading + HCM) verbatim, then the
+    // regenerated body where present, else the original body verbatim.
+    let first = sections.first().map(|s| s.heading_line).unwrap_or(lines.len());
+    let mut out: Vec<String> = lines[..first].iter().map(|s| s.to_string()).collect();
+    for (i, sec) in sections.iter().enumerate() {
+        for l in &lines[sec.heading_line..sec.body_start] {
+            out.push(l.to_string());
+        }
+        match &new_bodies[i] {
+            Some(nb) => {
+                for l in nb.split('\n') {
+                    out.push(l.to_string());
+                }
+                out.push(String::new()); // one blank line before the next heading
+            }
+            None => {
+                for l in &lines[sec.body_start..sec.body_end] {
+                    out.push(l.to_string());
+                }
+            }
+        }
+    }
+
+    let _ = app.emit("ai-compose:done", serde_json::json!({ "sections": total }));
+    Ok(AiDocument {
+        title: index::note_name(&path),
+        content: out.join("\n"),
+    })
 }
 
 /// Incrementally (re)embed a single note's chunks, replacing its previous

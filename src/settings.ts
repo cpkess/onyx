@@ -5,12 +5,14 @@ export interface Settings {
   fontSize: number;
   serif: boolean;
   readableWidth: boolean;
+  showFormattingToolbar: boolean;
   defaultMode: EditorMode;
   attachmentsFolder: string;
   newNoteFolder: string;
   dailyFolder: string;
   dailyFormat: string;
   dailyTemplate: string; // path to a template note (optional)
+  weekStart: 0 | 1; // calendar week start: 0 = Sunday, 1 = Monday
   templatesFolder: string;
   hotkeys: Record<string, string>; // commandId -> combo override
 }
@@ -20,12 +22,14 @@ export const defaultSettings: Settings = {
   fontSize: 16,
   serif: false,
   readableWidth: true,
+  showFormattingToolbar: true,
   defaultMode: "live",
   attachmentsFolder: "attachments",
   newNoteFolder: "",
   dailyFolder: "",
   dailyFormat: "YYYY-MM-DD",
   dailyTemplate: "",
+  weekStart: 0,
   templatesFolder: "templates",
   hotkeys: {},
 };

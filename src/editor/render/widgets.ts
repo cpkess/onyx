@@ -2,6 +2,7 @@ import { EditorView, WidgetType } from "@codemirror/view";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { renderMarkdown, renderInline } from "./markdown";
 import { getHost } from "./host";
+import { loadKatex, loadMermaid, mathCache, mermaidCache, enhanceRendered } from "./enhance";
 import { api } from "../../lib/api";
 import { runDql, runInline, toText, type DvResult } from "../../dataview/engine";
 import { DvLink } from "../../dataview/value";
@@ -101,6 +102,7 @@ export class EmbedWidget extends WidgetType {
           return;
         }
         body.innerHTML = renderMarkdown(extractSection(content, this.anchor));
+        enhanceRendered(body);
       })
       .catch(() => {
         body.textContent = "Could not load note.";
@@ -132,6 +134,38 @@ export class PropertiesWidget extends WidgetType {
       el.appendChild(row);
     }
     return el;
+  }
+}
+
+/** A collapsed "AI context" badge standing in for a hidden `<!--ai … -->` HCM
+ *  block. Clicking it places the cursor inside the block to reveal the source. */
+export class HcmBadgeWidget extends WidgetType {
+  constructor(
+    readonly instruction: string,
+    readonly from: number,
+    readonly to: number
+  ) {
+    super();
+  }
+  eq(o: HcmBadgeWidget) {
+    return o.instruction === this.instruction && o.from === this.from;
+  }
+  toDOM(view: EditorView) {
+    const el = document.createElement("div");
+    el.className = "onyx-hcm onyx-rendered";
+    el.textContent = "✨ AI context";
+    el.title = this.instruction || "AI context for this section";
+    el.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      // Put the cursor just inside the comment so the raw block reveals.
+      const pos = Math.min(this.from + 5, view.state.doc.length);
+      view.dispatch({ selection: { anchor: pos } });
+      view.focus();
+    });
+    return el;
+  }
+  ignoreEvent() {
+    return false;
   }
 }
 
@@ -412,15 +446,6 @@ export class FootnoteRefWidget extends WidgetType {
 
 // ---- Math (KaTeX, lazy-loaded) ----
 
-let katexMod: Promise<typeof import("katex")> | null = null;
-function loadKatex() {
-  return (katexMod ??= Promise.all([
-    import("katex"),
-    import("katex/dist/katex.min.css"),
-  ]).then(([m]) => m));
-}
-const mathCache = new Map<string, string>();
-
 export class MathWidget extends WidgetType {
   constructor(readonly formula: string, readonly display: boolean) {
     super();
@@ -456,18 +481,6 @@ export class MathWidget extends WidgetType {
 
 // ---- Mermaid diagrams (lazy-loaded) ----
 
-let mermaidMod: Promise<typeof import("mermaid")> | null = null;
-function loadMermaid() {
-  return (mermaidMod ??= import("mermaid").then((m) => {
-    m.default.initialize({
-      startOnLoad: false,
-      theme: document.documentElement.classList.contains("dark") ? "dark" : "default",
-      securityLevel: "strict",
-    });
-    return m;
-  }));
-}
-const mermaidCache = new Map<string, string>();
 let mermaidSeq = 0;
 
 export class MermaidWidget extends WidgetType {

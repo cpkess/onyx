@@ -425,6 +425,168 @@ pub fn chunk_content(content: &str, max_chars: usize) -> Vec<(i64, String)> {
     chunks
 }
 
+/// One heading section of a note, with any attached Hierarchical Context
+/// Metadata (HCM) instruction. Sections are contiguous and cover the whole
+/// document after the preamble (lines before the first heading).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Section {
+    pub level: usize,
+    pub title: String,
+    pub heading_line: usize,
+    /// HCM instruction text (from a `<!--ai … -->` block under the heading).
+    pub instruction: Option<String>,
+    /// First body line (after the heading and any HCM block).
+    pub body_start: usize,
+    /// Exclusive end line: the next heading's line, or the line count at EOF.
+    pub body_end: usize,
+}
+
+static HEADING_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#{1,6})\s+(.*)$").unwrap());
+
+/// Parse a note into heading sections, capturing each section's HCM instruction
+/// block if one appears as the first non-blank content under the heading.
+/// Headings inside fenced code blocks are ignored.
+pub fn parse_sections(content: &str) -> Vec<Section> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let n = lines.len();
+
+    // Mark which lines sit inside a ``` or ~~~ fenced code block.
+    let mut in_code = vec![false; n];
+    let mut fence: Option<char> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let is_fence = t.starts_with("```") || t.starts_with("~~~");
+        match fence {
+            Some(c) => {
+                in_code[i] = true; // the closing fence line is part of the block
+                if is_fence && t.starts_with(c) {
+                    fence = None;
+                }
+            }
+            None => {
+                if is_fence {
+                    fence = Some(if t.starts_with("```") { '`' } else { '~' });
+                    in_code[i] = true;
+                }
+            }
+        }
+    }
+
+    // Heading line indices (outside code), in order.
+    let heads: Vec<usize> = (0..n)
+        .filter(|&i| !in_code[i] && HEADING_RE.is_match(lines[i]))
+        .collect();
+
+    let mut sections = Vec::with_capacity(heads.len());
+    for (hi, &h) in heads.iter().enumerate() {
+        let caps = HEADING_RE.captures(lines[h]).unwrap();
+        let level = caps.get(1).unwrap().as_str().len();
+        let title = caps.get(2).unwrap().as_str().trim().to_string();
+        let section_end = heads.get(hi + 1).copied().unwrap_or(n);
+
+        // Look for an HCM block as the first non-blank content under the heading.
+        let mut body_start = h + 1;
+        let mut instruction = None;
+        let mut scan = h + 1;
+        while scan < section_end && lines[scan].trim().is_empty() {
+            scan += 1;
+        }
+        if scan < section_end && lines[scan].trim_start().starts_with("<!--") {
+            if let Some((text, after)) = read_hcm_block(&lines, scan, section_end) {
+                if let Some(t) = text {
+                    let t = t.trim().to_string();
+                    if !t.is_empty() {
+                        instruction = Some(t);
+                    }
+                }
+                body_start = after;
+            }
+        }
+
+        sections.push(Section {
+            level,
+            title,
+            heading_line: h,
+            instruction,
+            body_start,
+            body_end: section_end,
+        });
+    }
+    sections
+}
+
+/// If lines starting at `start` form an `<!--ai … -->` block, return its inner
+/// instruction text (None if the comment isn't an `ai` block) and the line index
+/// just past the closing `-->`. Returns None if it isn't a comment at all.
+fn read_hcm_block(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+) -> Option<(Option<String>, usize)> {
+    let first = lines[start].trim_start();
+    let rest = first.strip_prefix("<!--")?;
+    // Is it marked `ai`? (`<!--ai` or `<!-- ai`)
+    let is_ai = rest.trim_start().starts_with("ai");
+
+    // Collect the comment text until `-->`.
+    let mut inner = String::new();
+    for i in start..end {
+        let line = lines[i];
+        let mut seg = if i == start { first } else { line };
+        if i == start {
+            seg = seg.strip_prefix("<!--").unwrap_or(seg);
+        }
+        if let Some(idx) = seg.find("-->") {
+            inner.push_str(&seg[..idx]);
+            let body_after = if i == start {
+                // Inline single-line comment: body continues on the same line.
+                start + 1
+            } else {
+                i + 1
+            };
+            if is_ai {
+                let mut text = inner;
+                // Drop the leading `ai` marker token.
+                let trimmed = text.trim_start();
+                if let Some(t) = trimmed.strip_prefix("ai") {
+                    text = t.to_string();
+                }
+                return Some((Some(text), body_after));
+            }
+            return Some((None, body_after));
+        }
+        inner.push_str(seg);
+        inner.push('\n');
+    }
+    // Unterminated comment — treat the rest of the section as the block.
+    if is_ai {
+        let trimmed = inner.trim_start();
+        let text = trimmed.strip_prefix("ai").unwrap_or(trimmed).to_string();
+        return Some((Some(text), end));
+    }
+    Some((None, end))
+}
+
+/// Parent-section instructions for `sections[i]`, nearest ancestor last, built
+/// from the heading-level stack (for HCM contextual inheritance).
+pub fn ancestors(sections: &[Section], i: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut level = sections[i].level;
+    for j in (0..i).rev() {
+        if sections[j].level < level {
+            if let Some(ins) = &sections[j].instruction {
+                out.push(ins.clone());
+            }
+            level = sections[j].level;
+            if level == 1 {
+                break;
+            }
+        }
+    }
+    out.reverse();
+    out
+}
+
 /// Remove a note that no longer exists on disk.
 pub fn remove_note(conn: &Connection, rel_path: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM notes WHERE path = ?1", params![rel_path])?;
@@ -778,6 +940,59 @@ mod tests {
     fn parses_wikilinks() {
         let c = "See [[Alpha]] and [[Beta|the beta]] and [[Gamma#sec]] and [[Alpha]].";
         assert_eq!(extract_wikilinks(c), vec!["Alpha", "Beta", "Gamma"]);
+    }
+
+    #[test]
+    fn sections_capture_hcm_and_ranges() {
+        let c = "---\nk: v\n---\nintro\n\n# Meeting\n<!--ai\nExtract action items.\n-->\nraw text\nmore\n\n## Tasks\nbody\n";
+        let secs = parse_sections(c);
+        assert_eq!(secs.len(), 2);
+        // # Meeting at line 5 (0-based), HCM lines 6-8, body starts line 8.
+        assert_eq!(secs[0].level, 1);
+        assert_eq!(secs[0].title, "Meeting");
+        assert_eq!(secs[0].heading_line, 5);
+        assert_eq!(secs[0].instruction.as_deref(), Some("Extract action items."));
+        assert_eq!(secs[0].body_start, 9);
+        // body_end is the next heading line.
+        assert_eq!(secs[0].body_end, secs[1].heading_line);
+        // ## Tasks has no HCM.
+        assert_eq!(secs[1].level, 2);
+        assert_eq!(secs[1].instruction, None);
+        assert_eq!(secs[1].body_start, secs[1].heading_line + 1);
+    }
+
+    #[test]
+    fn sections_inline_hcm_and_inheritance() {
+        let c = "# Project\n<!--ai tone: terse-->\np\n\n## Sub\n<!--ai bullets-->\nx\n";
+        let secs = parse_sections(c);
+        assert_eq!(secs[0].instruction.as_deref(), Some("tone: terse"));
+        assert_eq!(secs[1].instruction.as_deref(), Some("bullets"));
+        // The ## Sub section inherits the # Project instruction.
+        assert_eq!(ancestors(&secs, 1), vec!["tone: terse".to_string()]);
+        assert_eq!(ancestors(&secs, 0), Vec::<String>::new());
+    }
+
+    #[test]
+    fn sections_skip_fenced_code_headings() {
+        let c = "# Real\n```\n# not a heading\n```\nbody\n";
+        let secs = parse_sections(c);
+        assert_eq!(secs.len(), 1);
+        assert_eq!(secs[0].title, "Real");
+    }
+
+    #[test]
+    fn sections_reconstruct_roundtrip() {
+        // The section ranges must tile the document exactly after the preamble,
+        // so reassembling them (no regeneration) reproduces the input.
+        let c = "intro line\n\n# A\n<!--ai do x-->\nbody a\n\n## B\nbody b\nlast\n";
+        let lines: Vec<&str> = c.split('\n').collect();
+        let secs = parse_sections(c);
+        let first = secs.first().map(|s| s.heading_line).unwrap_or(lines.len());
+        let mut out: Vec<&str> = lines[..first].to_vec();
+        for s in &secs {
+            out.extend_from_slice(&lines[s.heading_line..s.body_end]);
+        }
+        assert_eq!(out, lines);
     }
 
     #[test]
