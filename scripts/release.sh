@@ -19,7 +19,11 @@ echo "▶ Installing to $APP_DEST…"
 rm -rf "$APP_DEST"
 cp -R "$APP_SRC" "$APP_DEST"
 
-echo "▶ Clearing quarantine flag…"
-xattr -dr com.apple.quarantine "$APP_DEST" 2>/dev/null || true
+echo "▶ Clearing extended attributes (incl. quarantine)…"
+xattr -cr "$APP_DEST" 2>/dev/null || true
+
+# Apply a valid ad-hoc signature so macOS doesn't report the app as "damaged".
+echo "▶ Ad-hoc signing…"
+codesign --force --deep --sign - "$APP_DEST"
 
 echo "✓ Onyx installed. Launch it from Spotlight (⌘-Space → \"Onyx\") or /Applications."
