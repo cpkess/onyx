@@ -1,6 +1,6 @@
 [package]
 name = "onyx"
-version = "0.1.0"
+version = "0.1.1"
 description = "Onyx — an AI-augmented local-first knowledge base"
 authors = ["Onyx"]
 edition = "2021"
