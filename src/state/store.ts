@@ -19,6 +19,7 @@ import {
   emptyWorkspace,
   moveTab,
   openInPane,
+  openToRight,
   removePathEverywhere,
   remapPaths,
   setActiveInPane,
@@ -59,6 +60,7 @@ interface AppStore {
   // Pane / tab actions
   openNote: (path: string) => void;
   openNoteInPane: (paneId: string, path: string) => void;
+  openNoteToRight: (path: string) => void;
   closeTab: (path: string) => void;
   closeTabInPane: (paneId: string, path: string) => void;
   setActive: (path: string) => void;
@@ -190,10 +192,15 @@ export const useStore = create<AppStore>((set, get) => {
             }>;
             if (saved.panes?.length) {
               set({ noteModes: saved.noteModes ?? {}, recent: saved.recent ?? [] });
+              // Normalize legacy multi-tab panes to one file per pane.
+              const panes = saved.panes.map((p) => ({
+                ...p,
+                tabs: p.activeTab ? [p.activeTab] : [],
+              }));
               commit(
                 {
-                  panes: saved.panes,
-                  activePaneId: saved.activePaneId ?? saved.panes[0].id,
+                  panes,
+                  activePaneId: saved.activePaneId ?? panes[0].id,
                 },
                 false
               );
@@ -240,6 +247,10 @@ export const useStore = create<AppStore>((set, get) => {
 
     openNote: (path) => {
       commit(openInPane(ws(), get().activePaneId, path));
+      pushRecent(path);
+    },
+    openNoteToRight: (path) => {
+      commit(openToRight(ws(), path));
       pushRecent(path);
     },
     openNoteInPane: (paneId, path) => {

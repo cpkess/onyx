@@ -164,6 +164,10 @@ export const api = {
     invoke<string>("ai_complete", { messages }),
   appendToNote: (path: string, heading: string, text: string) =>
     invoke<void>("append_to_note", { path, heading, text }),
+  importDocument: (filePath: string, useLlm = true) =>
+    invoke<string>("import_document", { filePath, useLlm }),
+  importDocumentBytes: (name: string, data: number[], useLlm = true) =>
+    invoke<string>("import_document_bytes", { name, data, useLlm }),
 };
 
 /** Open a native folder picker; returns the chosen path or null. */

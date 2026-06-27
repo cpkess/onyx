@@ -31,14 +31,29 @@ function mapPane(ws: Workspace, id: string, fn: (p: Pane) => Pane): Workspace {
 }
 
 export function openInPane(ws: Workspace, paneId: string, path: string): Workspace {
+  // One file per pane: opening a note replaces whatever the pane was showing.
   return {
-    ...mapPane(ws, paneId, (p) => ({
-      ...p,
-      tabs: p.tabs.includes(path) ? p.tabs : [...p.tabs, path],
-      activeTab: path,
-    })),
+    ...mapPane(ws, paneId, (p) => ({ ...p, tabs: [path], activeTab: path })),
     activePaneId: paneId,
   };
+}
+
+/**
+ * Open `path` in the pane to the right of the active pane, reusing it if one
+ * exists (keeps a tidy two-panel layout) or creating one if it doesn't. Focus
+ * stays on the reference pane so repeated use doesn't spawn extra panels.
+ */
+export function openToRight(ws: Workspace, path: string): Workspace {
+  const refIdx = Math.max(0, ws.panes.findIndex((p) => p.id === ws.activePaneId));
+  const right = ws.panes[refIdx + 1];
+  if (right) {
+    const next = openInPane(ws, right.id, path);
+    return { ...next, activePaneId: ws.activePaneId };
+  }
+  const fresh: Pane = { id: newId(), tabs: [path], activeTab: path };
+  const panes = [...ws.panes];
+  panes.splice(refIdx + 1, 0, fresh);
+  return { panes, activePaneId: ws.activePaneId };
 }
 
 export function setActiveInPane(ws: Workspace, paneId: string, path: string): Workspace {

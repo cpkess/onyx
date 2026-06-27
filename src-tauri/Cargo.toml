@@ -35,4 +35,8 @@ regex = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 futures-util = "0.3"
 sqlite-vec = "0.1"
+pdf-extract = "0.7"
+zip = "2"
+quick-xml = "0.37"
+base64 = "0.22"
 

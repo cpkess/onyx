@@ -9,6 +9,7 @@ import {
 import { regenerateActivePage } from "../lib/regenerate";
 import { composeActivePage } from "../lib/compose";
 import { manualUpdateCheck } from "../lib/updater";
+import { pickAndImport } from "../lib/importDoc";
 
 export interface Command {
   id: string;
@@ -117,6 +118,18 @@ export const commands: Command[] = [
   },
   { id: "settings", name: "Open settings", keys: "mod+,", run: () => s().setSettingsOpen(true) },
   { id: "check-updates", name: "Check for updates", run: () => void manualUpdateCheck() },
+  {
+    id: "import-document",
+    name: "Import document…",
+    run: () => {
+      pickAndImport().then((rel) => {
+        if (rel) {
+          void s().refreshTree();
+          s().openNote(rel);
+        }
+      }).catch((e) => console.error("import failed", e));
+    },
+  },
   { id: "toggle-theme", name: "Toggle dark / light theme", run: () => s().toggleTheme() },
 ];
 

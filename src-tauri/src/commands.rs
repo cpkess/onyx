@@ -1412,3 +1412,233 @@ pub async fn ai_rag_chat(
     ai::chat_stream(app, cfg, aug, request_id).await;
     Ok(())
 }
+
+// ===== Document ingestion =====
+//
+// Imports an external file (PDF, DOCX, TXT) into the vault as a markdown note.
+// PDFs are processed PAGE BY PAGE (when poppler is available) — each page is
+// rendered to an image and combined with its extracted text in a single
+// vision+text LLM call, then concatenated. This guarantees every page is
+// captured and avoids the multi-image attention failure of batching all pages
+// into one request. Without poppler (or for DOCX/TXT), the raw text is chunked
+// (never truncated) and each chunk is formatted by the LLM. Every pass degrades
+// gracefully to raw text if the model is offline or unsupported.
+
+/// System prompt shared by every page/chunk conversion call. Folds in callouts,
+/// math fidelity, and auto-linking against existing note titles.
+fn conversion_system(vocab: &[String]) -> String {
+    let names = vocab
+        .iter()
+        .take(300)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let link_rule = if names.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n- For any term that matches an existing note title, link the FIRST occurrence as a \
+             [[wikilink]] (e.g. [[Title]]). Existing note titles: {names}."
+        )
+    };
+    format!(
+        "You are a document conversion assistant for Onyx, a markdown note-taking app. Convert the \
+         provided document content into clean GitHub-flavored Markdown.\n\
+         - Preserve heading hierarchy with ATX headings (##, ###). Do NOT add a top-level # title.\n\
+         - Render tables as Markdown tables; preserve lists and nesting; use fenced code blocks for code.\n\
+         - Preserve mathematics as LaTeX: inline as $...$ and display as $$...$$.\n\
+         - Wrap each key insight, takeaway, definition, or important warning in an Onyx callout, \
+         written as a blockquote whose first line is `> [!insight] Short title` followed by `> ` \
+         body lines. Use [!warning], [!tip], [!important], [!note], or [!question] when they fit \
+         better. Do not over-use callouts.{link_rule}\n\
+         - Output ONLY the markdown for this content — no preamble, no explanation."
+    )
+}
+
+/// One conversion call. With an image it issues a multimodal request; without,
+/// it uses the plain chat completion. Returns None on any failure.
+async fn convert_part(
+    cfg: &AiConfig,
+    system: &str,
+    user_text: String,
+    image_b64: Option<&str>,
+) -> Option<String> {
+    if let Some(b64) = image_b64 {
+        let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": cfg.chat_model,
+            "stream": false,
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": [
+                    { "type": "text", "text": user_text },
+                    { "type": "image_url", "image_url": { "url": format!("data:image/png;base64,{b64}") } }
+                ]}
+            ]
+        });
+        let resp = reqwest::Client::new().post(&url).json(&body).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let json: serde_json::Value = resp.json().await.ok()?;
+        json["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string())
+    } else {
+        ai::chat_complete(
+            cfg,
+            vec![msg("system", system.to_string()), msg("user", user_text)],
+        )
+        .await
+        .ok()
+    }
+}
+
+/// Core ingestion routine (no vault lock held — safe to await across).
+async fn build_import_markdown(
+    app: &AppHandle,
+    cfg: &AiConfig,
+    path: &std::path::Path,
+    title: &str,
+    vocab: &[String],
+    use_llm: bool,
+) -> String {
+    use crate::import;
+    let ext = import::ext_of(path);
+    let system = conversion_system(vocab);
+
+    // -- PDF page-by-page (vision + per-page text) --
+    if use_llm && ext == "pdf" && import::has_poppler() {
+        let pages = import::render_pdf_pages(path);
+        if !pages.is_empty() {
+            let total = pages.len();
+            let mut parts: Vec<String> = Vec::with_capacity(total);
+            for (idx, b64) in pages.iter().enumerate() {
+                let page_no = idx + 1;
+                let page_text = import::extract_pdf_page_text(path, page_no).unwrap_or_default();
+                let user_text = format!(
+                    "This image is page {page_no} of {total} of a document and shows the true \
+                     layout. The raw extracted text below is for verbatim accuracy.\n\nRAW TEXT:\n{page_text}"
+                );
+                let md = convert_part(cfg, &system, user_text, Some(b64)).await;
+                parts.push(md.filter(|s| !s.trim().is_empty()).unwrap_or(page_text));
+                let _ = app.emit(
+                    "import:progress",
+                    serde_json::json!({ "page": page_no, "total": total }),
+                );
+            }
+            return format!("# {title}\n\n{}", parts.join("\n\n"));
+        }
+        // poppler present but rendered nothing — fall through to the text path.
+    }
+
+    // -- Text path (DOCX/TXT, PDF without poppler, or use_llm=false) --
+    let raw = import::extract_text(path).unwrap_or_default();
+    if !use_llm || raw.trim().is_empty() {
+        return if raw.trim().is_empty() {
+            format!("# {title}\n\n")
+        } else {
+            format!("# {title}\n\n{raw}")
+        };
+    }
+
+    let chunks = import::chunk_text(&raw, 8000);
+    let total = chunks.len();
+    let mut parts: Vec<String> = Vec::with_capacity(total);
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let md = convert_part(cfg, &system, chunk.clone(), None).await;
+        parts.push(md.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| chunk.clone()));
+        let _ = app.emit(
+            "import:progress",
+            serde_json::json!({ "page": idx + 1, "total": total }),
+        );
+    }
+    format!("# {title}\n\n{}", parts.join("\n\n"))
+}
+
+/// Snapshot the vault's note titles for auto-linking (lock held briefly).
+fn collect_note_names(state: &State<AppState>) -> Result<Vec<String>, String> {
+    let guard = state.vault.lock().unwrap();
+    let ctx = guard.as_ref().ok_or("No vault is open")?;
+    index::all_note_names(&ctx.conn).map_err(|e| e.to_string())
+}
+
+/// Write the imported markdown to a uniquely-named note and index it.
+fn write_imported_note(
+    state: &State<AppState>,
+    title: &str,
+    markdown: &str,
+) -> Result<String, String> {
+    with_vault(state, |ctx| {
+        let base = title.replace(['/', '\\'], "-");
+        let mut rel = format!("{base}.md");
+        let mut n = 2;
+        while vault::resolve(&ctx.root, &rel)?.exists() {
+            rel = format!("{base} {n}.md");
+            n += 1;
+        }
+        let abs = vault::resolve(&ctx.root, &rel)?;
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&abs, markdown).map_err(|e| e.to_string())?;
+        index::index_note(&ctx.conn, &rel, markdown, now_secs()).map_err(|e| e.to_string())?;
+        Ok(rel)
+    })
+}
+
+/// Import a document by filesystem path (used by the file picker / command palette).
+#[tauri::command]
+pub async fn import_document(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    file_path: String,
+    use_llm: bool,
+) -> Result<String, String> {
+    let path = std::path::PathBuf::from(&file_path);
+    let title = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Imported document")
+        .to_string();
+    let cfg = ai::load_config(&app);
+    let vocab = collect_note_names(&state)?;
+    let markdown = build_import_markdown(&app, &cfg, &path, &title, &vocab, use_llm).await;
+    write_imported_note(&state, &title, &markdown)
+}
+
+/// Import a document from raw bytes (used by drag-and-drop, where the browser
+/// File API exposes contents but not the filesystem path). Writes the bytes to a
+/// temp file and runs the same pipeline.
+#[tauri::command]
+pub async fn import_document_bytes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    data: Vec<u8>,
+    use_llm: bool,
+) -> Result<String, String> {
+    let name_path = std::path::Path::new(&name);
+    let title = name_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Imported document")
+        .to_string();
+    let ext = name_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("bin")
+        .to_lowercase();
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("onyx_dropimport_{stamp}.{ext}"));
+    std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
+
+    let cfg = ai::load_config(&app);
+    let vocab = collect_note_names(&state)?;
+    let markdown = build_import_markdown(&app, &cfg, &tmp, &title, &vocab, use_llm).await;
+    let _ = std::fs::remove_file(&tmp);
+    write_imported_note(&state, &title, &markdown)
+}

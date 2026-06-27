@@ -156,8 +156,24 @@ function Editor() {
 function Files() {
   const settings = useStore((s) => s.settings);
   const setSettings = useStore((s) => s.setSettings);
+  const vault = useStore((s) => s.vault);
+  const chooseVault = useStore((s) => s.chooseVault);
   return (
     <div>
+      <Row>
+        <label className={label}>Vault</label>
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm text-neutral-700 dark:text-neutral-200">
+            {vault?.name ?? "No vault open"}
+          </span>
+          <button
+            onClick={chooseVault}
+            className="shrink-0 rounded-md bg-black/5 px-3 py-1.5 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
+          >
+            Change vault…
+          </button>
+        </div>
+      </Row>
       <Row>
         <label className={label}>Attachments folder</label>
         <input

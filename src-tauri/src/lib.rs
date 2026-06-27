@@ -1,5 +1,6 @@
 mod ai;
 mod commands;
+mod import;
 mod index;
 mod vault;
 mod vector;
@@ -61,6 +62,8 @@ pub fn run() {
             commands::ai_regenerate,
             commands::ai_compose_sections,
             commands::ai_rag_chat,
+            commands::import_document,
+            commands::import_document_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

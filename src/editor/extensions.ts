@@ -31,7 +31,6 @@ const markdownHighlight = HighlightStyle.define([
   { tag: t.url, color: "var(--onyx-accent)" },
   { tag: t.monospace, class: "tok-code" },
   { tag: t.quote, fontStyle: "italic", opacity: "0.85" },
-  { tag: t.list, color: "var(--onyx-accent)" },
 ]);
 
 /** Click handler: follow a `[[wikilink]]` (carrying an optional #heading/^block). */

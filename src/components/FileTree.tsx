@@ -3,6 +3,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { TreeNode } from "../lib/api";
 import { useStore } from "../state/store";
 import { ContextMenu, type MenuState } from "./ContextMenu";
+import { pickAndImport, onImportProgress, type ImportProgress } from "../lib/importDoc";
 
 // The path currently being dragged (module-level: survives across TreeItems).
 let draggedPath: string | null = null;
@@ -144,10 +145,16 @@ export function FileTree() {
   const renamePath = useStore((s) => s.renamePath);
   const deleteNote = useStore((s) => s.deleteNote);
   const openNote = useStore((s) => s.openNote);
+  const openNoteToRight = useStore((s) => s.openNoteToRight);
 
   const [mode, setMode] = useState<CreateMode>(null);
   const [name, setName] = useState("");
   const [rootOver, setRootOver] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+
+  useEffect(() => onImportProgress(setImportProgress), []);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -199,6 +206,7 @@ export function FileTree() {
         ]
       : [
           { label: "Open", onClick: () => openNote(node.path) },
+          { label: "Open in right panel", onClick: () => openNoteToRight(node.path) },
           { label: "Rename", onClick: () => beginRename(node) },
           { label: "Reveal in Finder", onClick: () => reveal(node.path) },
           {
@@ -214,6 +222,24 @@ export function FileTree() {
 
   const reveal = (rel: string) => {
     if (vault) revealItemInDir(`${vault.root}/${rel}`).catch(() => {});
+  };
+
+  const handleImport = async () => {
+    setImportError(null);
+    setImportProgress(null);
+    setImporting(true);
+    try {
+      const rel = await pickAndImport();
+      if (rel) {
+        await useStore.getState().refreshTree();
+        openNote(rel);
+      }
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImporting(false);
+      setImportProgress(null);
+    }
   };
 
   const onRootDragOver = (e: React.DragEvent) => {
@@ -263,8 +289,30 @@ export function FileTree() {
             >
               🗀
             </button>
+            <button
+              onClick={() => void handleImport()}
+              disabled={importing}
+              title="Import document (PDF, DOCX, TXT)"
+              className="rounded px-1.5 text-base leading-none text-neutral-500 hover:bg-black/5 disabled:opacity-40 dark:hover:bg-white/10"
+            >
+              {importing ? "⏳" : "📥"}
+            </button>
           </div>
         </div>
+
+        {importing && (
+          <p className="mx-2 mb-1 rounded bg-black/5 px-2 py-1 text-xs text-neutral-500 dark:bg-white/10 dark:text-neutral-400">
+            {importProgress
+              ? `Importing… page ${importProgress.page} / ${importProgress.total}`
+              : "Importing…"}
+          </p>
+        )}
+
+        {importError && (
+          <p className="mx-2 mb-1 rounded bg-red-50 px-2 py-1 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
+            {importError}
+          </p>
+        )}
 
         {mode && (
           <div className="px-2 pb-1">

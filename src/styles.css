@@ -250,6 +250,12 @@ body {
 .onyx-callout-quote {
   --callout: #888;
 }
+.onyx-callout-insight,
+.onyx-callout-idea,
+.onyx-callout-summary,
+.onyx-callout-abstract {
+  --callout: #7c6cff;
+}
 
 /* Blockquotes */
 .cm-line.cm-blockquote {

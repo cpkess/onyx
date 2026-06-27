@@ -12,17 +12,15 @@ import { StatusBar } from "./components/StatusBar";
 import { HoverPreview } from "./components/HoverPreview";
 import { TemplatePicker } from "./components/TemplatePicker";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { ImportDropZone } from "./components/ImportDropZone";
 import { runHotkey } from "./commands/registry";
 import { invalidatePages } from "./dataview/pages";
 
 function Toolbar() {
   const vault = useStore((s) => s.vault);
-  const chooseVault = useStore((s) => s.chooseVault);
-  const toggleTheme = useStore((s) => s.toggleTheme);
   const openPalette = useStore((s) => s.openPalette);
   const setGraphOpen = useStore((s) => s.setGraphOpen);
   const setSettingsOpen = useStore((s) => s.setSettingsOpen);
-  const openAiTool = useStore((s) => s.openAiTool);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
 
   return (
@@ -48,31 +46,11 @@ function Toolbar() {
         Graph
       </button>
       <button
-        onClick={() => openAiTool("chat")}
-        className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-        title="AI (chat, tools, weave) — ⌘J"
-      >
-        AI
-      </button>
-      <button
         onClick={() => setSettingsOpen(true)}
         className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-        title="AI settings"
+        title="Settings"
       >
         ⚙
-      </button>
-      <button
-        onClick={toggleTheme}
-        className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-        title="Toggle theme"
-      >
-        ◐
-      </button>
-      <button
-        onClick={chooseVault}
-        className="rounded px-2 py-1 text-sm text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
-      >
-        Change vault
       </button>
       <button
         onClick={toggleSidebar}
@@ -171,6 +149,7 @@ export default function App() {
       <TemplatePicker />
       <HoverPreview />
       <UpdateBanner />
+      <ImportDropZone />
     </div>
   );
 }
