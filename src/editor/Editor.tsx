@@ -22,6 +22,7 @@ import { onyxExtensions, noteNamesFacet } from "./extensions";
 import { setActiveEditor, clearActiveEditor } from "./activeEditor";
 import { EditorToolbar } from "./EditorToolbar";
 import { queueIndex } from "../lib/autoindex";
+import { trackEvent } from "../features/night/track";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
 import { editorModeFacet, type EditorMode } from "./render/core";
 import { ensurePages, onPagesChanged } from "../dataview/pages";
@@ -179,7 +180,10 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
       saveTimer.current = window.setTimeout(() => {
         api
           .writeNote(path, content)
-          .then(() => queueIndex(path))
+          .then(() => {
+            queueIndex(path);
+            trackEvent("EDIT_NOTE", path);
+          })
           .catch((e) => console.error("save failed", e));
       }, 400);
     };

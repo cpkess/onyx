@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, type AiConfig } from "../lib/api";
+import { api, type AiConfig, type NightSettings } from "../lib/api";
 import { useStore } from "../state/store";
 import { commands, effectiveKeys, eventToCombo } from "../commands/registry";
 import type { EditorMode } from "../editor/render/core";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { currentVersion, checkForUpdate, installUpdate } from "../lib/updater";
 
-type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai" | "about";
+type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai" | "night" | "about";
 
 const field =
   "w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[var(--onyx-accent)] dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-100";
@@ -27,6 +27,7 @@ export function Settings() {
     ["daily", "Daily notes"],
     ["hotkeys", "Hotkeys"],
     ["ai", "AI (LM Studio)"],
+    ["night", "Night Shift"],
     ["about", "Updates"],
   ];
 
@@ -72,6 +73,7 @@ export function Settings() {
           {tab === "daily" && <Daily />}
           {tab === "hotkeys" && <Hotkeys />}
           {tab === "ai" && <AiSettings />}
+          {tab === "night" && <NightShift />}
           {tab === "about" && <About />}
         </div>
       </div>
@@ -392,6 +394,128 @@ function Checkbox({
       />
       {text}
     </label>
+  );
+}
+
+// ---- Night Shift ----
+
+function NightShift() {
+  const [s, setS] = useState<NightSettings | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    api.getNightSettings().then(setS).catch(() => {});
+  }, []);
+
+  if (!s) return <p className="text-sm text-neutral-400">Loading…</p>;
+
+  const update = (patch: Partial<NightSettings>) => {
+    const next = { ...s, ...patch };
+    setS(next);
+    api.setNightSettings(next).then(() => {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1200);
+    }).catch(() => {});
+  };
+
+  const modes: [NightSettings["mode"], string, string][] = [
+    ["disabled", "Disabled", "No background processing."],
+    ["smart", "Smart", "Run only when charging, idle, and CPU is low."],
+    ["scheduled", "Scheduled", "Run during a nightly time window while charging."],
+    ["manual", "Manual", "Only run when you click “Run now”."],
+  ];
+
+  return (
+    <div>
+      <Row>
+        <label className={label}>Processing mode</label>
+        <div className="space-y-1.5">
+          {modes.map(([m, title, desc]) => (
+            <label key={m} className="flex cursor-pointer items-start gap-2 text-sm">
+              <input
+                type="radio"
+                name="night-mode"
+                checked={s.mode === m}
+                onChange={() => update({ mode: m })}
+                className="mt-1 accent-[var(--onyx-accent)]"
+              />
+              <span>
+                <span className="font-medium text-neutral-800 dark:text-neutral-100">{title}</span>
+                <span className="block text-xs text-neutral-400">{desc}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </Row>
+
+      {s.mode === "scheduled" && (
+        <Row>
+          <label className={label}>Nightly window (hour, 0–23)</label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={s.window_start}
+              onChange={(e) => update({ window_start: Number(e.target.value) })}
+              className={field + " w-20"}
+            />
+            <span className="text-sm text-neutral-400">to</span>
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={s.window_end}
+              onChange={(e) => update({ window_end: Number(e.target.value) })}
+              className={field + " w-20"}
+            />
+          </div>
+        </Row>
+      )}
+
+      {s.mode === "smart" && (
+        <>
+          <Row>
+            <label className={label}>Idle before running (minutes)</label>
+            <input
+              type="number"
+              min={1}
+              value={s.idle_minutes}
+              onChange={(e) => update({ idle_minutes: Number(e.target.value) })}
+              className={field + " w-24"}
+            />
+          </Row>
+          <Row>
+            <label className={label}>Max CPU to start (%)</label>
+            <input
+              type="number"
+              min={5}
+              max={100}
+              value={s.cpu_max}
+              onChange={(e) => update({ cpu_max: Number(e.target.value) })}
+              className={field + " w-24"}
+            />
+          </Row>
+        </>
+      )}
+
+      <Row>
+        <label className={label}>Apply accepted summaries by</label>
+        <select
+          className={field}
+          value={s.summary_apply}
+          onChange={(e) => update({ summary_apply: e.target.value as NightSettings["summary_apply"] })}
+        >
+          <option value="append">Appending a Summary section to the note</option>
+          <option value="note">Creating a separate summary note</option>
+        </select>
+      </Row>
+
+      <p className="text-xs text-neutral-400">
+        Onyx processes in the background and never changes your notes automatically — review and apply
+        suggestions from the 🌙 tab. {saved && <span className="text-green-600 dark:text-green-400">Saved.</span>}
+      </p>
+    </div>
   );
 }
 

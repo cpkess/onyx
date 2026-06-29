@@ -11,7 +11,7 @@ use crate::vault::{self, AppState, TreeNode, VaultInfo};
 use crate::vector::{self, SemanticHit};
 
 /// Run a closure with the open vault, returning an error if none is open.
-fn with_vault<T, F>(state: &State<AppState>, f: F) -> Result<T, String>
+pub fn with_vault<T, F>(state: &State<AppState>, f: F) -> Result<T, String>
 where
     F: FnOnce(&vault::VaultCtx) -> Result<T, String>,
 {
@@ -97,7 +97,10 @@ pub fn get_last_vault(app: AppHandle) -> Option<String> {
 
 #[tauri::command]
 pub fn open_vault(app: AppHandle, path: String) -> Result<VaultInfo, String> {
-    vault::open(&app, &path)
+    let info = vault::open(&app, &path)?;
+    // Open the Night Shift assistant database for this vault.
+    crate::night::on_vault_opened(&app, std::path::Path::new(&path));
+    Ok(info)
 }
 
 #[tauri::command]

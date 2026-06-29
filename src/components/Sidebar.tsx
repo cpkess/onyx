@@ -12,6 +12,7 @@ import { ChatPanel } from "./ChatPanel";
 import { AiTools } from "./AiTools";
 import { WeavePanel } from "./WeavePanel";
 import { CalendarTab } from "./CalendarTab";
+import { NightTab } from "../features/night/NightTab";
 
 export function Sidebar() {
   const activeTab = useStore((s) => s.activeTab);
@@ -39,6 +40,7 @@ export function Sidebar() {
     ["marks", "★"],
     ["ai", "AI"],
     ["calendar", "📅"],
+    ["night", "🌙"],
   ];
 
   return (
@@ -65,6 +67,7 @@ export function Sidebar() {
         {tab === "marks" && <BookmarksTab />}
         {tab === "ai" && <AiTab activeTab={activeTab} />}
         {tab === "calendar" && <CalendarTab />}
+        {tab === "night" && <NightTab />}
       </div>
     </div>
   );

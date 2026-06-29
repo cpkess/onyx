@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
+import { trackEvent } from "../features/night/track";
 
 export const IMPORT_EXTENSIONS = ["pdf", "docx", "txt", "md"];
 
@@ -23,7 +24,9 @@ export async function pickAndImport(useLlm = true): Promise<string | null> {
 export async function importFromFile(file: File, useLlm = true): Promise<string> {
   const buf = await file.arrayBuffer();
   const bytes = Array.from(new Uint8Array(buf));
-  return api.importDocumentBytes(file.name, bytes, useLlm);
+  const rel = await api.importDocumentBytes(file.name, bytes, useLlm);
+  trackEvent("IMPORT_DOCUMENT", rel);
+  return rel;
 }
 
 /** Is this filename a format we can ingest? */

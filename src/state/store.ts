@@ -10,6 +10,7 @@ import {
 } from "../settings";
 import { setHotkeyOverrides } from "../commands/registry";
 import { invalidatePages } from "../dataview/pages";
+import { trackEvent } from "../features/night/track";
 import {
   type Pane,
   type Workspace,
@@ -28,7 +29,7 @@ import {
 
 type Theme = "dark" | "light";
 export type PaletteMode = "files" | "commands" | "semantic";
-export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai" | "calendar";
+export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai" | "calendar" | "night";
 export type AiTool = "assist" | "chat" | "tools" | "weave";
 
 interface AppStore {
@@ -248,6 +249,7 @@ export const useStore = create<AppStore>((set, get) => {
     openNote: (path) => {
       commit(openInPane(ws(), get().activePaneId, path));
       pushRecent(path);
+      trackEvent("OPEN_NOTE", path);
     },
     openNoteToRight: (path) => {
       commit(openToRight(ws(), path));
@@ -271,6 +273,7 @@ export const useStore = create<AppStore>((set, get) => {
     createAndOpen: async (path) => {
       try {
         const rel = await api.createNote(path);
+        trackEvent("CREATE_NOTE", rel);
         await get().refreshTree();
         get().openNote(rel);
       } catch (e) {
@@ -324,6 +327,7 @@ export const useStore = create<AppStore>((set, get) => {
     deleteNote: async (path) => {
       try {
         await api.deleteNote(path);
+        trackEvent("DELETE_NOTE", path);
         commit(removePathEverywhere(ws(), path));
         await get().refreshTree();
       } catch (e) {

@@ -2,9 +2,11 @@ mod ai;
 mod commands;
 mod import;
 mod index;
+mod night;
 mod vault;
 mod vector;
 
+use night::NightState;
 use vault::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +20,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
+        .manage(NightState::default())
+        .setup(|app| {
+            // Start the Night Shift background scheduler (one coarse tick/min).
+            night::start_scheduler(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_last_vault,
             commands::open_vault,
@@ -64,6 +72,16 @@ pub fn run() {
             commands::ai_rag_chat,
             commands::import_document,
             commands::import_document_bytes,
+            night::record_event,
+            night::get_night_settings,
+            night::set_night_settings,
+            night::get_processing_status,
+            night::start_processing,
+            night::pause_processing,
+            night::get_suggestions,
+            night::get_morning_review,
+            night::accept_suggestion,
+            night::dismiss_suggestion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

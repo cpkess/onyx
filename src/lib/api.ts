@@ -92,6 +92,42 @@ export interface AiDocument {
   content: string;
 }
 
+export interface NightSettings {
+  mode: "disabled" | "smart" | "scheduled" | "manual";
+  window_start: number;
+  window_end: number;
+  idle_minutes: number;
+  cpu_max: number;
+  summary_apply: "append" | "note";
+}
+
+export interface NightSuggestion {
+  id: number;
+  kind: string;
+  confidence: number;
+  title: string;
+  preview: string;
+  body: string;
+  target_path: string;
+  created_at: number;
+}
+
+export interface ProcessingStatus {
+  running: boolean;
+  mode: string;
+  pending_jobs: number;
+  pending_suggestions: number;
+}
+
+export interface MorningReview {
+  has_run: boolean;
+  finished_at: number;
+  notes_processed: number;
+  links_found: number;
+  summaries_created: number;
+  pending_suggestions: number;
+}
+
 export const api = {
   getLastVault: () => invoke<string | null>("get_last_vault"),
   openVault: (path: string) => invoke<VaultInfo>("open_vault", { path }),
@@ -168,6 +204,21 @@ export const api = {
     invoke<string>("import_document", { filePath, useLlm }),
   importDocumentBytes: (name: string, data: number[], useLlm = true) =>
     invoke<string>("import_document_bytes", { name, data, useLlm }),
+
+  // ---- Night Shift (overnight intelligence) ----
+  recordEvent: (kind: string, entity?: string, metadata?: string) =>
+    invoke<void>("record_event", { kind, entity, metadata }),
+  getNightSettings: () => invoke<NightSettings>("get_night_settings"),
+  setNightSettings: (settings: NightSettings) =>
+    invoke<void>("set_night_settings", { settings }),
+  getProcessingStatus: () => invoke<ProcessingStatus>("get_processing_status"),
+  startProcessing: () => invoke<void>("start_processing"),
+  pauseProcessing: () => invoke<void>("pause_processing"),
+  getSuggestions: () => invoke<NightSuggestion[]>("get_suggestions"),
+  getMorningReview: () => invoke<MorningReview>("get_morning_review"),
+  acceptSuggestion: (id: number) => invoke<string>("accept_suggestion", { id }),
+  dismissSuggestion: (id: number, never: boolean) =>
+    invoke<void>("dismiss_suggestion", { id, never }),
 };
 
 /** Open a native folder picker; returns the chosen path or null. */
