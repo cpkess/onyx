@@ -30,6 +30,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Notarization uses an App Store Connect API key (.p8). The key file is
+      # stored base64-encoded in a secret and written to disk here.
+      - name: Prepare App Store Connect API key
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          echo "${{ secrets.APPLE_API_KEY_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/asc/AuthKey.p8"
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -42,11 +49,10 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # Notarization (Apple ID + app-specific password + team id). Tauri
-          # notarizes and staples the bundle when these are present.
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Notarization via App Store Connect API key (robust; no Apple ID/pw).
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/asc/AuthKey.p8
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Onyx ${{ github.ref_name }}"
