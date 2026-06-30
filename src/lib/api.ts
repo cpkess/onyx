@@ -128,6 +128,88 @@ export interface MorningReview {
   pending_suggestions: number;
 }
 
+export interface Atom {
+  id: number;
+  kind: string;
+  text: string;
+  source_path: string;
+  source_heading: string | null;
+  confidence: number;
+  status: string;
+  created_at: number;
+}
+
+export interface AtomGroup {
+  source_path: string;
+  source_name: string;
+  atoms: Atom[];
+}
+
+export interface AtomRelationView {
+  kind: string;
+  direction: "in" | "out";
+  atom: Atom;
+}
+
+export interface DecisionTrace {
+  decision: Atom;
+  supporting: Atom[];
+}
+
+export interface AtomsStatus {
+  running: boolean;
+  pending: number;
+  approved: number;
+  total: number;
+}
+
+export interface AtomsSettings {
+  enabled_kinds: string[];
+  infer_relationships: boolean;
+  min_confidence: number;
+}
+
+export interface AtomFilter {
+  kind?: string;
+  query?: string;
+  source?: string;
+  relation?: string;
+}
+
+export interface NoteKnowledge {
+  derived: Atom[];
+  related: Atom[];
+}
+
+export interface AtomPair {
+  a: Atom;
+  b: Atom;
+  kind: string;
+}
+
+export interface Tensions {
+  contradictions: AtomPair[];
+  duplicates: AtomPair[];
+}
+
+export interface AtomGraphNode {
+  id: string;
+  label: string;
+  kind: string;
+  source_path: string;
+}
+
+export interface AtomGraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+export interface AtomGraph {
+  nodes: AtomGraphNode[];
+  edges: AtomGraphEdge[];
+}
+
 export const api = {
   getLastVault: () => invoke<string | null>("get_last_vault"),
   openVault: (path: string) => invoke<VaultInfo>("open_vault", { path }),
@@ -219,6 +301,31 @@ export const api = {
   acceptSuggestion: (id: number) => invoke<string>("accept_suggestion", { id }),
   dismissSuggestion: (id: number, never: boolean) =>
     invoke<void>("dismiss_suggestion", { id, never }),
+
+  // ---- Atomic Knowledge Synthesis ----
+  atomsGetSettings: () => invoke<AtomsSettings>("atoms_get_settings"),
+  atomsSetSettings: (settings: AtomsSettings) =>
+    invoke<void>("atoms_set_settings", { settings }),
+  atomsStatus: () => invoke<AtomsStatus>("atoms_status"),
+  atomsSynthesizeNote: (path: string) => invoke<void>("atoms_synthesize_note", { path }),
+  atomsSynthesizeVault: () => invoke<void>("atoms_synthesize_vault"),
+  atomsRebuild: () => invoke<void>("atoms_rebuild"),
+  getPendingAtoms: () => invoke<AtomGroup[]>("get_pending_atoms"),
+  getAtoms: (filter: AtomFilter) => invoke<Atom[]>("get_atoms", { filter }),
+  approveAtom: (id: number) => invoke<void>("approve_atom", { id }),
+  rejectAtom: (id: number) => invoke<void>("reject_atom", { id }),
+  editAtom: (id: number, text: string, kind: string) =>
+    invoke<void>("edit_atom", { id, text, kind }),
+  mergeAtoms: (ids: number[], text: string, kind: string) =>
+    invoke<number>("merge_atoms", { ids, text, kind }),
+  splitAtom: (id: number, texts: string[]) => invoke<void>("split_atom", { id, texts }),
+  getRelations: (atomId: number) => invoke<AtomRelationView[]>("get_relations", { atomId }),
+  getDecisionTrace: (atomId: number) =>
+    invoke<DecisionTrace | null>("get_decision_trace", { atomId }),
+  getDecisions: () => invoke<Atom[]>("get_decisions"),
+  getNoteKnowledge: (path: string) => invoke<NoteKnowledge>("get_note_knowledge", { path }),
+  getTensions: () => invoke<Tensions>("get_tensions"),
+  getAtomGraph: () => invoke<AtomGraph>("get_atom_graph"),
 };
 
 /** Open a native folder picker; returns the chosen path or null. */

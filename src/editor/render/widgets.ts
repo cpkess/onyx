@@ -3,7 +3,8 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { renderMarkdown, renderInline } from "./markdown";
 import { getHost } from "./host";
 import { loadKatex, loadMermaid, mathCache, mermaidCache, enhanceRendered } from "./enhance";
-import { api } from "../../lib/api";
+import { api, type AtomFilter } from "../../lib/api";
+import { kindLabel, KIND_COLOR } from "../../features/atoms/kinds";
 import { runDql, runInline, toText, type DvResult } from "../../dataview/engine";
 import { DvLink } from "../../dataview/value";
 import { getCachedPages, invalidatePages } from "../../dataview/pages";
@@ -639,6 +640,71 @@ export class DataviewWidget extends WidgetType {
         api.toggleTask(path, line).then(() => invalidatePages()).catch(() => {});
       }
     });
+    return el;
+  }
+}
+
+// ---- Atoms (knowledge units) ----
+
+/** Parse a minimal atoms-block query into an AtomFilter. Supported lines:
+ *  `kind: pain_point`, `source: .` (current note) or a path, `relation: contradicts`,
+ *  `search: text`, or a bare line treated as search text. */
+function parseAtomsQuery(source: string, currentPath: string | null): AtomFilter {
+  const f: AtomFilter = {};
+  for (const raw of source.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^(\w+)\s*:\s*(.+)$/);
+    if (m) {
+      const key = m[1].toLowerCase();
+      const val = m[2].trim();
+      if (key === "kind") f.kind = val;
+      else if (key === "relation") f.relation = val;
+      else if (key === "search" || key === "text") f.query = val;
+      else if (key === "source") f.source = val === "." ? currentPath ?? undefined : val;
+    } else {
+      f.query = line;
+    }
+  }
+  return f;
+}
+
+export class AtomsWidget extends WidgetType {
+  constructor(readonly source: string, readonly currentPath: string | null) {
+    super();
+  }
+  eq(o: AtomsWidget) {
+    return o.source === this.source && o.currentPath === this.currentPath;
+  }
+  toDOM() {
+    const el = document.createElement("div");
+    el.className = "onyx-atoms onyx-rendered";
+    el.innerHTML = `<div class="onyx-dv-empty">Loading atoms…</div>`;
+    const filter = parseAtomsQuery(this.source, this.currentPath);
+    api
+      .getAtoms(filter)
+      .then((atoms) => {
+        if (atoms.length === 0) {
+          el.innerHTML = `<div class="onyx-dv-empty">No matching atoms.</div>`;
+          return;
+        }
+        el.innerHTML = atoms
+          .map((a) => {
+            const name = a.source_path.split("/").pop()?.replace(/\.md$/i, "") ?? a.source_path;
+            const color = KIND_COLOR[a.kind] ?? "#888";
+            return (
+              `<div class="onyx-atom-row">` +
+              `<span class="onyx-atom-kind" style="--ak:${color}">${escHtml(kindLabel(a.kind))}</span>` +
+              `<span class="onyx-atom-text">${escHtml(a.text)}</span> ` +
+              `<a class="tok-wikilink onyx-atom-src" data-wikilink="${escAttr(name)}">${escHtml(name)}</a>` +
+              `</div>`
+            );
+          })
+          .join("");
+      })
+      .catch(() => {
+        el.innerHTML = `<div class="onyx-dv-error">Could not load atoms.</div>`;
+      });
     return el;
   }
 }

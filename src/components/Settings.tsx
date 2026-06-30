@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { api, type AiConfig, type NightSettings } from "../lib/api";
+import { api, type AiConfig, type NightSettings, type AtomsSettings } from "../lib/api";
 import { useStore } from "../state/store";
 import { commands, effectiveKeys, eventToCombo } from "../commands/registry";
 import type { EditorMode } from "../editor/render/core";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { currentVersion, checkForUpdate, installUpdate } from "../lib/updater";
 
-type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai" | "night" | "about";
+type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai" | "night" | "atoms" | "about";
 
 const field =
   "w-full rounded-md border border-black/10 bg-white px-3 py-2 text-sm text-neutral-800 outline-none focus:border-[var(--onyx-accent)] dark:border-white/15 dark:bg-neutral-800 dark:text-neutral-100";
@@ -28,6 +28,7 @@ export function Settings() {
     ["hotkeys", "Hotkeys"],
     ["ai", "AI (LM Studio)"],
     ["night", "Night Shift"],
+    ["atoms", "Atoms"],
     ["about", "Updates"],
   ];
 
@@ -74,6 +75,7 @@ export function Settings() {
           {tab === "hotkeys" && <Hotkeys />}
           {tab === "ai" && <AiSettings />}
           {tab === "night" && <NightShift />}
+          {tab === "atoms" && <AtomsSettingsTab />}
           {tab === "about" && <About />}
         </div>
       </div>
@@ -514,6 +516,69 @@ function NightShift() {
       <p className="text-xs text-neutral-400">
         Onyx processes in the background and never changes your notes automatically — review and apply
         suggestions from the 🌙 tab. {saved && <span className="text-green-600 dark:text-green-400">Saved.</span>}
+      </p>
+    </div>
+  );
+}
+
+// ---- Atoms (knowledge synthesis) ----
+
+const ATOM_KIND_LABELS: [string, string][] = [
+  ["fact", "Fact"],
+  ["signal", "Signal"],
+  ["insight", "Insight"],
+  ["pain_point", "Customer Pain Point"],
+  ["claim", "Claim"],
+  ["action_item", "Action Item"],
+  ["decision", "Decision"],
+];
+
+function AtomsSettingsTab() {
+  const [s, setS] = useState<AtomsSettings | null>(null);
+
+  useEffect(() => {
+    api.atomsGetSettings().then(setS).catch(() => {});
+  }, []);
+  if (!s) return <p className="text-sm text-neutral-400">Loading…</p>;
+
+  const update = (patch: Partial<AtomsSettings>) => {
+    const next = { ...s, ...patch };
+    setS(next);
+    api.atomsSetSettings(next).catch(() => {});
+  };
+  const toggleKind = (k: string) => {
+    const has = s.enabled_kinds.includes(k);
+    update({
+      enabled_kinds: has ? s.enabled_kinds.filter((x) => x !== k) : [...s.enabled_kinds, k],
+    });
+  };
+
+  return (
+    <div>
+      <Row>
+        <label className={label}>Atom types to extract</label>
+        <div className="space-y-1">
+          {ATOM_KIND_LABELS.map(([k, lbl]) => (
+            <label key={k} className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={s.enabled_kinds.includes(k)}
+                onChange={() => toggleKind(k)}
+                className="accent-[var(--onyx-accent)]"
+              />
+              {lbl}
+            </label>
+          ))}
+        </div>
+      </Row>
+      <Checkbox
+        label="Infer relationships between atoms (uses the LLM; slower)"
+        checked={s.infer_relationships}
+        onChange={(v) => update({ infer_relationships: v })}
+      />
+      <p className="text-xs text-neutral-400">
+        Atoms are stored in a separate database and never modify your notes. Synthesis is incremental —
+        only new or changed notes produce new atoms. Use the ⚛ tab to review and curate.
       </p>
     </div>
   );

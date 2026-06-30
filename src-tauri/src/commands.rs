@@ -98,8 +98,9 @@ pub fn get_last_vault(app: AppHandle) -> Option<String> {
 #[tauri::command]
 pub fn open_vault(app: AppHandle, path: String) -> Result<VaultInfo, String> {
     let info = vault::open(&app, &path)?;
-    // Open the Night Shift assistant database for this vault.
+    // Open the Night Shift + Atoms databases for this vault.
     crate::night::on_vault_opened(&app, std::path::Path::new(&path));
+    crate::atoms::on_vault_opened(&app, std::path::Path::new(&path));
     Ok(info)
 }
 
@@ -986,18 +987,19 @@ async fn synthesize_doc(
         }
     }
 
+    let atoms = crate::atoms::context_block(app, if scope_value.is_empty() { "vault overview" } else { scope_value }, 16).await;
     let messages = vec![
         msg(
             "system",
-            "You are a research analyst. Synthesize the provided notes into a concise markdown \
-             brief with sections: Overview, Key Themes, Connections, Contradictions/Tensions, \
-             Open Questions. Reference notes with [[Note Title]] wikilinks where relevant. Do not \
-             invent facts beyond the notes. Directly under each `##` heading, add an HTML comment \
-             of the form `<!--ai\n<one sentence on what this section should contain>\n-->` so the \
-             page can be regenerated section-by-section later."
+            "You are a research analyst. Synthesize the provided notes and curated knowledge atoms \
+             into a concise markdown brief with sections: Overview, Key Themes, Connections, \
+             Contradictions/Tensions, Open Questions. Reference notes with [[Note Title]] wikilinks \
+             where relevant. Do not invent facts beyond the material. Directly under each `##` \
+             heading, add an HTML comment of the form `<!--ai\n<one sentence on what this section \
+             should contain>\n-->` so the page can be regenerated section-by-section later."
                 .to_string(),
         ),
-        msg("user", format!("Notes to synthesize:{corpus}")),
+        msg("user", format!("Notes to synthesize:{corpus}{atoms}")),
     ];
     let body = ai::chat_complete(&cfg, messages).await?;
     let label = if scope_value.is_empty() {
@@ -1081,18 +1083,19 @@ async fn subject_doc(
         }
     }
 
+    let atoms = crate::atoms::context_block(app, subject, 16).await;
     let messages = vec![
         msg(
             "system",
             "You write encyclopedic, Wikipedia-style subject pages STRICTLY from the supplied \
-             notes. Use markdown headings. Cite supporting notes inline as [[Note Title]]. Do not \
-             invent facts not present in the notes. End with a 'Sources' section listing the \
-             [[Note Title]] links you used. Directly under each `##` heading, add an HTML comment of \
-             the form `<!--ai\n<one sentence on what this section should contain>\n-->` so the page \
-             can be regenerated section-by-section later."
+             notes and curated knowledge atoms. Use markdown headings. Cite supporting notes inline \
+             as [[Note Title]]. Do not invent facts not present in the material. End with a \
+             'Sources' section listing the [[Note Title]] links you used. Directly under each `##` \
+             heading, add an HTML comment of the form `<!--ai\n<one sentence on what this section \
+             should contain>\n-->` so the page can be regenerated section-by-section later."
                 .to_string(),
         ),
-        msg("user", format!("Subject: {subject}\n\nSource notes:{corpus}")),
+        msg("user", format!("Subject: {subject}\n\nSource notes:{corpus}{atoms}")),
     ];
     let content = ai::chat_complete(&cfg, messages).await?;
     let fm = format!(
@@ -1401,12 +1404,15 @@ pub async fn ai_rag_chat(
         .map(|h| format!("[[{}]]:\n{}", index::note_name(&h.path), h.text))
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
+    // Also surface curated knowledge atoms relevant to the question.
+    let atoms = crate::atoms::context_block(&app, &query, 8).await;
     let system = msg(
         "system",
         format!(
-            "You are an assistant answering from the user's personal notes. Use the retrieved \
-             context below to answer, and cite sources inline as [[Note Title]]. If the answer is \
-             not contained in the notes, say so plainly.\n\nContext:\n{context}"
+            "You are an assistant answering from the user's personal notes and curated knowledge \
+             atoms. Use the retrieved context below to answer, and cite sources inline as \
+             [[Note Title]]. If the answer is not contained in the material, say so plainly.\n\n\
+             Context:\n{context}{atoms}"
         ),
     );
 

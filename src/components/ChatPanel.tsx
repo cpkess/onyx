@@ -162,7 +162,7 @@ export function ChatPanel() {
             onChange={(e) => setUseNotes(e.target.checked)}
             className="accent-[var(--onyx-accent)]"
           />
-          Use my notes (RAG) — answer from your vault with citations
+          Use my knowledge (RAG) — answer from your notes + atoms with citations
         </label>
         <textarea
           value={input}

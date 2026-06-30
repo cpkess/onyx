@@ -28,8 +28,8 @@ import {
 } from "./workspace";
 
 type Theme = "dark" | "light";
-export type PaletteMode = "files" | "commands" | "semantic";
-export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai" | "calendar" | "night";
+export type PaletteMode = "files" | "commands" | "semantic" | "atoms";
+export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai" | "calendar" | "night" | "atoms";
 export type AiTool = "assist" | "chat" | "tools" | "weave";
 
 interface AppStore {

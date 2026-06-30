@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, noteName, type SearchResult, type TreeNode } from "../lib/api";
 import { useStore, type PaletteMode } from "../state/store";
+import { kindLabel } from "../features/atoms/kinds";
 import { commands, type Command } from "../commands/registry";
 
 function flatten(nodes: TreeNode[], out: string[] = []): string[] {
@@ -26,6 +27,7 @@ const KIND_LABEL: Record<PaletteMode, string> = {
   commands: "Commands",
   files: "Files",
   semantic: "AI",
+  atoms: "Atoms",
 };
 
 export function CommandPalette() {
@@ -68,6 +70,31 @@ export function CommandPalette() {
     setSel(0);
     setError(null);
     const raw = query.trim();
+
+    if (kind === "atoms") {
+      if (!raw) return setFileResults([]);
+      setBusy(true);
+      const id = window.setTimeout(() => {
+        api
+          .getAtoms({ query: raw })
+          .then((atoms) => {
+            setFileResults(
+              atoms.map((a) => ({
+                path: a.source_path,
+                title: a.text,
+                snippet: `${kindLabel(a.kind)} · ${noteName(a.source_path)}`,
+              }))
+            );
+            if (atoms.length === 0) setError("No matching atoms.");
+          })
+          .catch((e) => {
+            setFileResults([]);
+            setError(String(e));
+          })
+          .finally(() => setBusy(false));
+      }, 200);
+      return () => window.clearTimeout(id);
+    }
 
     if (kind === "semantic") {
       if (!raw) return setFileResults([]);
@@ -178,12 +205,14 @@ export function CommandPalette() {
                 ? "Run a command…"
                 : kind === "semantic"
                   ? "Semantic search across your notes…"
-                  : "Search or jump to a note… (Enter creates on no match)"
+                  : kind === "atoms"
+                    ? "Search your knowledge atoms…"
+                    : "Search or jump to a note… (Enter creates on no match)"
             }
             className="flex-1 bg-transparent px-1 py-3 text-base text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-white"
           />
           <div className="flex shrink-0 rounded-md bg-black/5 p-0.5 text-xs dark:bg-white/10">
-            {(["commands", "files", "semantic"] as PaletteMode[]).map((k) => (
+            {(["commands", "files", "semantic", "atoms"] as PaletteMode[]).map((k) => (
               <button
                 key={k}
                 onClick={() => switchKind(k)}
@@ -234,7 +263,7 @@ export function CommandPalette() {
               ))
             : fileResults.map((r, i) => (
                 <button
-                  key={r.path}
+                  key={`${r.path}-${i}`}
                   onMouseEnter={() => setSel(i)}
                   onClick={() => choose(i)}
                   className={`block w-full px-4 py-2 text-left ${

@@ -560,6 +560,35 @@ body {
   color: var(--onyx-accent);
 }
 
+/* Atoms (```atoms blocks) */
+.onyx-atoms {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+}
+.onyx-atom-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  flex-wrap: wrap;
+  padding: 0.15em 0;
+}
+.onyx-atom-kind {
+  flex: none;
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--ak, #888);
+  border: 1px solid color-mix(in srgb, var(--ak, #888) 40%, transparent);
+  border-radius: 4px;
+  padding: 0.05em 0.4em;
+}
+.onyx-atom-src {
+  font-size: 0.8em;
+  opacity: 0.8;
+}
+
 /* Thin scrollbars to match a notes app. */
 * {
   scrollbar-width: thin;

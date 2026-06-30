@@ -1,4 +1,5 @@
 mod ai;
+mod atoms;
 mod commands;
 mod import;
 mod index;
@@ -6,6 +7,7 @@ mod night;
 mod vault;
 mod vector;
 
+use atoms::AtomsState;
 use night::NightState;
 use vault::AppState;
 
@@ -21,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(AppState::default())
         .manage(NightState::default())
+        .manage(AtomsState::default())
         .setup(|app| {
             // Start the Night Shift background scheduler (one coarse tick/min).
             night::start_scheduler(app.handle().clone());
@@ -82,6 +85,25 @@ pub fn run() {
             night::get_morning_review,
             night::accept_suggestion,
             night::dismiss_suggestion,
+            atoms::atoms_get_settings,
+            atoms::atoms_set_settings,
+            atoms::atoms_status,
+            atoms::atoms_synthesize_note,
+            atoms::atoms_synthesize_vault,
+            atoms::atoms_rebuild,
+            atoms::get_pending_atoms,
+            atoms::get_atoms,
+            atoms::approve_atom,
+            atoms::reject_atom,
+            atoms::edit_atom,
+            atoms::merge_atoms,
+            atoms::split_atom,
+            atoms::get_relations,
+            atoms::get_decision_trace,
+            atoms::get_decisions,
+            atoms::get_note_knowledge,
+            atoms::get_tensions,
+            atoms::get_atom_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,6 +4,18 @@ import { Sigma } from "sigma";
 import forceAtlas2 from "graphology-layout-forceatlas2";
 import { api, noteName, type GraphData } from "../lib/api";
 import { useStore } from "../state/store";
+import { KIND_COLOR } from "../features/atoms/kinds";
+
+type GraphMode = "global" | "local" | "atoms";
+
+const REL_COLOR: Record<string, string> = {
+  contradicts: "#e0524c",
+  supports: "#2ecc71",
+  extends: "#4c8dff",
+  similar_to: "#7c6cff",
+  related_to: "#888",
+  used_in_decision: "#d6336c",
+};
 
 export function GraphView() {
   const open = useStore((s) => s.graphOpen);
@@ -11,63 +23,96 @@ export function GraphView() {
   const openNote = useStore((s) => s.openNote);
   const activeTab = useStore((s) => s.activeTab);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [mode, setMode] = useState<"global" | "local">("global");
+  const [mode, setMode] = useState<GraphMode>("global");
 
   useEffect(() => {
     if (!open || !containerRef.current) return;
     let sigma: Sigma | null = null;
     let cancelled = false;
+    const accent = "#7c6cff";
 
-    api.getGraph().then((data: GraphData) => {
-      if (cancelled || !containerRef.current) return;
-
-      // Local mode: keep the active note and its direct neighbours.
-      let nodes = data.nodes;
-      let edges = data.edges;
-      if (mode === "local" && activeTab) {
-        const keep = new Set<string>([activeTab]);
-        for (const e of data.edges) {
-          if (e.source === activeTab) keep.add(e.target);
-          if (e.target === activeTab) keep.add(e.source);
-        }
-        nodes = data.nodes.filter((n) => keep.has(n.id));
-        edges = data.edges.filter((e) => keep.has(e.source) && keep.has(e.target));
-      }
-
+    const build = async () => {
       const graph = new Graph();
-      const accent = "#7c6cff";
-      for (const n of nodes) {
-        if (!graph.hasNode(n.id)) {
-          graph.addNode(n.id, {
-            label: n.label || noteName(n.id),
-            x: Math.random(),
-            y: Math.random(),
-            size: n.id === activeTab ? 8 : 4,
-            color: n.id === activeTab ? "#e0a800" : accent,
-          });
+      let onClick: (node: string) => void = (n) => {
+        openNote(n);
+        setOpen(false);
+      };
+
+      if (mode === "atoms") {
+        const data = await api.getAtomGraph();
+        if (cancelled || !containerRef.current) return;
+        const srcMap = new Map<string, string>();
+        for (const n of data.nodes) {
+          srcMap.set(n.id, n.source_path);
+          if (!graph.hasNode(n.id)) {
+            graph.addNode(n.id, {
+              label: n.label,
+              x: Math.random(),
+              y: Math.random(),
+              size: 4,
+              color: KIND_COLOR[n.kind] ?? accent,
+            });
+          }
         }
-      }
-      for (const e of edges) {
-        if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) {
-          graph.addEdge(e.source, e.target, { color: "#888", size: 0.5 });
+        for (const e of data.edges) {
+          if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) {
+            graph.addEdge(e.source, e.target, { color: REL_COLOR[e.kind] ?? "#888", size: 0.7 });
+          }
         }
+        onClick = (node) => {
+          const p = srcMap.get(node);
+          if (p) {
+            openNote(p);
+            setOpen(false);
+          }
+        };
+      } else {
+        const data: GraphData = await api.getGraph();
+        if (cancelled || !containerRef.current) return;
+        let nodes = data.nodes;
+        let edges = data.edges;
+        if (mode === "local" && activeTab) {
+          const keep = new Set<string>([activeTab]);
+          for (const e of data.edges) {
+            if (e.source === activeTab) keep.add(e.target);
+            if (e.target === activeTab) keep.add(e.source);
+          }
+          nodes = data.nodes.filter((n) => keep.has(n.id));
+          edges = data.edges.filter((e) => keep.has(e.source) && keep.has(e.target));
+        }
+        for (const n of nodes) {
+          if (!graph.hasNode(n.id)) {
+            graph.addNode(n.id, {
+              label: n.label || noteName(n.id),
+              x: Math.random(),
+              y: Math.random(),
+              size: n.id === activeTab ? 8 : 4,
+              color: n.id === activeTab ? "#e0a800" : accent,
+            });
+          }
+        }
+        for (const e of edges) {
+          if (graph.hasNode(e.source) && graph.hasNode(e.target) && !graph.hasEdge(e.source, e.target)) {
+            graph.addEdge(e.source, e.target, { color: "#888", size: 0.5 });
+          }
+        }
+        graph.forEachNode((node) => {
+          const deg = graph.degree(node);
+          if (node !== activeTab) graph.setNodeAttribute(node, "size", 3 + Math.min(deg, 12));
+        });
       }
-      graph.forEachNode((node) => {
-        const deg = graph.degree(node);
-        if (node !== activeTab) graph.setNodeAttribute(node, "size", 3 + Math.min(deg, 12));
-      });
+
       if (graph.order > 0) {
         forceAtlas2.assign(graph, { iterations: 200, settings: forceAtlas2.inferSettings(graph) });
       }
-      sigma = new Sigma(graph, containerRef.current, {
+      sigma = new Sigma(graph, containerRef.current!, {
         labelColor: { color: "#999" },
         defaultEdgeColor: "#888",
       });
-      sigma.on("clickNode", ({ node }) => {
-        openNote(node);
-        setOpen(false);
-      });
-    });
+      sigma.on("clickNode", ({ node }) => onClick(node));
+    };
+
+    build();
 
     return () => {
       cancelled = true;
@@ -80,7 +125,7 @@ export function GraphView() {
   return (
     <div className="fixed inset-0 z-40 bg-white dark:bg-neutral-900">
       <div className="absolute left-4 top-4 z-50 flex rounded-md bg-black/5 p-0.5 text-sm dark:bg-white/10">
-        {(["global", "local"] as const).map((m) => (
+        {(["global", "local", "atoms"] as const).map((m) => (
           <button
             key={m}
             onClick={() => setMode(m)}

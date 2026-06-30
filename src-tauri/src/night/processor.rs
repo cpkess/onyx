@@ -158,6 +158,13 @@ async fn process_job(app: &AppHandle, job: &Job) -> Result<JobResult, String> {
                 }
             }
         }
+        "ATOMIZE" => {
+            // Extract knowledge atoms from the note (stored as pending for review).
+            let n = crate::atoms::extract::synthesize_note(app, &job.payload)
+                .await
+                .unwrap_or(0);
+            res.notes = n as i64;
+        }
         "SYNTHESIZE" => {
             let tag = job.payload.strip_prefix("tag:").unwrap_or(&job.payload).to_string();
             let state = app.state::<AppState>();

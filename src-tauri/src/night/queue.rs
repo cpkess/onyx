@@ -31,6 +31,7 @@ pub fn plan_jobs(
     for (path, edits) in &touched {
         added += enqueue(night_conn, "INDEX", path, 1, now)?;
         added += enqueue(night_conn, "LINK_DISCOVERY", path, 2, now)?;
+        added += enqueue(night_conn, "ATOMIZE", path, 5, now)?;
         if *edits >= SUMMARIZE_EDIT_THRESHOLD {
             added += enqueue(night_conn, "SUMMARIZE", path, 3, now)?;
         }

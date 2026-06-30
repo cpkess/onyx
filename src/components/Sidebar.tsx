@@ -2,10 +2,13 @@ import { useEffect, useState } from "react";
 import {
   api,
   noteName,
+  type Atom,
   type Backlink,
   type LinkSuggestion,
+  type NoteKnowledge,
   type SearchResult,
 } from "../lib/api";
+import { kindLabel, KIND_COLOR } from "../features/atoms/kinds";
 import { useStore, type SidebarTab, type AiTool } from "../state/store";
 import { appendTags, insertText, scrollToHeading } from "../editor/activeEditor";
 import { ChatPanel } from "./ChatPanel";
@@ -13,6 +16,7 @@ import { AiTools } from "./AiTools";
 import { WeavePanel } from "./WeavePanel";
 import { CalendarTab } from "./CalendarTab";
 import { NightTab } from "../features/night/NightTab";
+import { AtomsTab } from "../features/atoms/AtomsTab";
 
 export function Sidebar() {
   const activeTab = useStore((s) => s.activeTab);
@@ -41,6 +45,7 @@ export function Sidebar() {
     ["ai", "AI"],
     ["calendar", "📅"],
     ["night", "🌙"],
+    ["atoms", "⚛"],
   ];
 
   return (
@@ -68,6 +73,7 @@ export function Sidebar() {
         {tab === "ai" && <AiTab activeTab={activeTab} />}
         {tab === "calendar" && <CalendarTab />}
         {tab === "night" && <NightTab />}
+        {tab === "atoms" && <AtomsTab />}
       </div>
     </div>
   );
@@ -126,6 +132,20 @@ function LinksTab({ activeTab, content }: { activeTab: string | null; content: s
   const [backlinks, setBacklinks] = useState<Backlink[]>([]);
   const [unlinked, setUnlinked] = useState<SearchResult[]>([]);
   const [outgoing, setOutgoing] = useState<{ name: string; path: string | null }[]>([]);
+  const [knowledge, setKnowledge] = useState<NoteKnowledge | null>(null);
+
+  useEffect(() => {
+    if (!activeTab) return setKnowledge(null);
+    let cancelled = false;
+    setKnowledge(null);
+    const id = window.setTimeout(() => {
+      api.getNoteKnowledge(activeTab).then((k) => !cancelled && setKnowledge(k)).catch(() => {});
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
+  }, [activeTab]);
 
   useEffect(() => {
     if (!activeTab) {
@@ -198,7 +218,44 @@ function LinksTab({ activeTab, content }: { activeTab: string | null; content: s
           <LinkRow key={u.path} title={u.title} sub={u.snippet} onClick={() => openNote(u.path)} />
         ))}
       </Section>
+
+      {knowledge && knowledge.derived.length > 0 && (
+        <Section title="Knowledge in this note">
+          {knowledge.derived.map((a) => (
+            <AtomRow key={a.id} atom={a} />
+          ))}
+        </Section>
+      )}
+
+      {knowledge && knowledge.related.length > 0 && (
+        <Section title="Related knowledge">
+          {knowledge.related.map((a) => (
+            <AtomRow key={a.id} atom={a} onClick={() => openNote(a.source_path)} />
+          ))}
+        </Section>
+      )}
     </div>
+  );
+}
+
+function AtomRow({ atom, onClick }: { atom: Atom; onClick?: () => void }) {
+  const color = KIND_COLOR[atom.kind] ?? "#888";
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      className={`mb-1 block w-full rounded p-1.5 text-left ${
+        onClick ? "hover:bg-black/5 dark:hover:bg-white/5" : "cursor-default"
+      }`}
+    >
+      <span
+        className="mr-1.5 rounded px-1 py-0.5 align-middle text-[9px] font-semibold uppercase tracking-wide"
+        style={{ color, border: `1px solid ${color}66` }}
+      >
+        {kindLabel(atom.kind)}
+      </span>
+      <span className="text-sm text-neutral-700 dark:text-neutral-200">{atom.text}</span>
+    </button>
   );
 }
 
