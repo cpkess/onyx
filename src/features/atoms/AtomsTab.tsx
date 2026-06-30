@@ -251,11 +251,15 @@ function AtomCard({
       <div className="mb-1 flex items-center gap-2">
         <input type="checkbox" checked={selected} onChange={onToggleSel} className="accent-[var(--onyx-accent)]" />
         <KindBadge kind={atom.kind} />
+        <SubBar value={atom.substantiation} />
         <span className="ml-auto text-[10px] text-neutral-400">{Math.round(atom.confidence * 100)}%</span>
       </div>
 
       {mode === "view" && (
-        <p className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-100">{atom.text}</p>
+        <>
+          <p className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-100">{atom.text}</p>
+          {atom.evidence && <Evidence text={atom.evidence} />}
+        </>
       )}
       {mode === "edit" && (
         <div className="space-y-1">
@@ -395,11 +399,13 @@ function DiscoverCard({ atom, onOpen }: { atom: Atom; onOpen: () => void }) {
     <div className="mb-1.5 rounded-md border border-black/10 p-2 dark:border-white/10">
       <div className="mb-1 flex items-center gap-2">
         <KindBadge kind={atom.kind} />
+        <SubBar value={atom.substantiation} />
         <button onClick={onOpen} className="ml-auto truncate text-[10px] text-neutral-400 hover:text-[var(--onyx-accent)]">
           {atom.source_path.split("/").pop()?.replace(/\.md$/, "")}
         </button>
       </div>
       <p className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-100">{atom.text}</p>
+      {atom.evidence && <Evidence text={atom.evidence} />}
       <button onClick={toggle} className="mt-1 text-[11px] text-[var(--onyx-accent)] hover:underline">
         {rels ? "Hide" : "Relations"}
       </button>
@@ -583,4 +589,23 @@ function Btn({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <p className="px-3 py-3 text-xs text-neutral-400">{children}</p>;
+}
+
+// Substantiation meter: red (weak/claim) → amber → green (well-substantiated).
+function SubBar({ value }: { value: number }) {
+  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
+  const color = value >= 0.7 ? "#2ecc71" : value >= 0.4 ? "#e0a800" : "#e0524c";
+  return (
+    <span title={`Substantiation ${pct}%`} className="inline-block h-1.5 w-8 rounded-full bg-black/10 dark:bg-white/10">
+      <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+    </span>
+  );
+}
+
+function Evidence({ text }: { text: string }) {
+  return (
+    <p className="mt-1 border-l-2 border-black/10 pl-2 text-xs italic text-neutral-400 dark:border-white/10">
+      “{text}”
+    </p>
+  );
 }

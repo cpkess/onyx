@@ -576,9 +576,64 @@ function AtomsSettingsTab() {
         checked={s.infer_relationships}
         onChange={(v) => update({ infer_relationships: v })}
       />
+
+      <Checkbox
+        label="Auto-approve (skip review for claims & well-substantiated facts)"
+        checked={s.auto_approve}
+        onChange={(v) => update({ auto_approve: v })}
+      />
+      {s.auto_approve && (
+        <div className="mb-3 ml-6 space-y-2">
+          <Row>
+            <label className={label}>Fact auto-approve — min confidence</label>
+            <input
+              type="range"
+              min={0.5}
+              max={0.95}
+              step={0.05}
+              value={s.fact_min_confidence}
+              onChange={(e) => update({ fact_min_confidence: Number(e.target.value) })}
+              className="w-full accent-[var(--onyx-accent)]"
+            />
+            <span className="text-xs text-neutral-400">{Math.round(s.fact_min_confidence * 100)}%</span>
+          </Row>
+          <Row>
+            <label className={label}>Fact auto-approve — min substantiation</label>
+            <input
+              type="range"
+              min={0.5}
+              max={0.95}
+              step={0.05}
+              value={s.fact_min_substantiation}
+              onChange={(e) => update({ fact_min_substantiation: Number(e.target.value) })}
+              className="w-full accent-[var(--onyx-accent)]"
+            />
+            <span className="text-xs text-neutral-400">
+              {Math.round(s.fact_min_substantiation * 100)}%
+            </span>
+          </Row>
+          <Checkbox
+            label="Adapt thresholds from my approve/reject feedback"
+            checked={s.adaptive}
+            onChange={(v) => update({ adaptive: v })}
+          />
+        </div>
+      )}
+      <Row>
+        <label className={label}>Signal needs this many distinct sources</label>
+        <input
+          type="number"
+          min={2}
+          value={s.signal_min_sources}
+          onChange={(e) => update({ signal_min_sources: Number(e.target.value) })}
+          className={field + " w-20"}
+        />
+      </Row>
+
       <p className="text-xs text-neutral-400">
-        Atoms are stored in a separate database and never modify your notes. Synthesis is incremental —
-        only new or changed notes produce new atoms. Use the ⚛ tab to review and curate.
+        Claims are the weakest atoms (auto-approved); Facts auto-approve only when substantiated;
+        Insights, Decisions and Pain points always go to review. Atoms live in a separate database and
+        never modify your notes. To re-classify existing notes with the new rules, use ⚛ → Rebuild.
       </p>
     </div>
   );

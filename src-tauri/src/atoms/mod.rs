@@ -3,7 +3,9 @@
 //! modified; everything here is generated and curated by the user.
 
 pub mod extract;
+pub mod policy;
 pub mod relate;
+pub mod signals;
 pub mod storage;
 
 use rusqlite::{params, Connection};
@@ -38,6 +40,32 @@ pub struct AtomsSettings {
     pub enabled_kinds: Vec<String>,
     pub infer_relationships: bool,
     pub min_confidence: f64,
+    /// Master switch for stakes-tiered auto-approval (skip review).
+    #[serde(default = "default_true")]
+    pub auto_approve: bool,
+    #[serde(default = "default_fact_conf")]
+    pub fact_min_confidence: f64,
+    #[serde(default = "default_fact_sub")]
+    pub fact_min_substantiation: f64,
+    /// Distinct sources required to mint a Signal atom.
+    #[serde(default = "default_signal_sources")]
+    pub signal_min_sources: i64,
+    /// Adapt auto-approval thresholds from approve/reject feedback.
+    #[serde(default = "default_true")]
+    pub adaptive: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_fact_conf() -> f64 {
+    0.8
+}
+fn default_fact_sub() -> f64 {
+    0.7
+}
+fn default_signal_sources() -> i64 {
+    3
 }
 
 impl Default for AtomsSettings {
@@ -46,6 +74,11 @@ impl Default for AtomsSettings {
             enabled_kinds: ATOM_KINDS.iter().map(|s| s.to_string()).collect(),
             infer_relationships: true,
             min_confidence: 0.0,
+            auto_approve: true,
+            fact_min_confidence: 0.8,
+            fact_min_substantiation: 0.7,
+            signal_min_sources: 3,
+            adaptive: true,
         }
     }
 }
@@ -121,6 +154,9 @@ pub struct Atom {
     pub source_path: String,
     pub source_heading: Option<String>,
     pub confidence: f64,
+    pub substantiation: f64,
+    pub evidence: Option<String>,
+    pub auto_approved: bool,
     pub status: String,
     pub created_at: i64,
 }
@@ -169,13 +205,17 @@ fn atom_from_row(r: &rusqlite::Row) -> rusqlite::Result<Atom> {
         source_path: r.get("source_path")?,
         source_heading: r.get("source_heading")?,
         confidence: r.get("confidence")?,
+        substantiation: r.get::<_, Option<f64>>("substantiation")?.unwrap_or(0.5),
+        evidence: r.get("evidence")?,
+        auto_approved: r.get::<_, Option<i64>>("auto_approved")?.unwrap_or(0) != 0,
         status: r.get("status")?,
         created_at: r.get("created_at")?,
     })
 }
 
 const ATOM_COLS: &str =
-    "id, kind, text, source_path, source_heading, confidence, status, created_at";
+    "id, kind, text, source_path, source_heading, confidence, substantiation, evidence, \
+     auto_approved, status, created_at";
 
 pub fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -317,7 +357,11 @@ fn spawn_synthesis(app: AppHandle, scope: SynthScope) {
     }
     tauri::async_runtime::spawn(async move {
         let added = match scope {
-            SynthScope::Note(p) => extract::synthesize_note(&app, &p).await.unwrap_or(0),
+            SynthScope::Note(p) => {
+                let n = extract::synthesize_note(&app, &p).await.unwrap_or(0);
+                extract::post_synthesis(&app).await;
+                n
+            }
             SynthScope::Vault => extract::synthesize_vault(&app).await,
             SynthScope::Rebuild => {
                 let _ = with_atoms(&app, |c| storage::clear_all(c));
@@ -413,8 +457,9 @@ pub fn approve_atom(app: AppHandle, id: i64) -> Result<(), String> {
         c.execute(
             "UPDATE atoms SET status='approved', updated_at=?2 WHERE id=?1",
             params![id, now_secs()],
-        )
-        .map(|_| ())
+        )?;
+        record_feedback(c, id, "approve");
+        Ok(())
     });
     // Embed the atom (always, so AI chat/tools can retrieve it) and infer
     // relationships (gated by the setting) — both in the background.
@@ -431,8 +476,9 @@ pub fn reject_atom(app: AppHandle, id: i64) -> Result<(), String> {
         c.execute(
             "UPDATE atoms SET status='rejected', updated_at=?2 WHERE id=?1",
             params![id, now_secs()],
-        )
-        .map(|_| ())
+        )?;
+        record_feedback(c, id, "reject");
+        Ok(())
     });
     Ok(())
 }
@@ -444,13 +490,41 @@ pub fn edit_atom(app: AppHandle, id: i64, text: String, kind: String) -> Result<
     }
     let sig = storage::signature(&kind, &text);
     with_atoms(&app, |c| {
+        // Capture the prior kind so a reclassification can teach the extractor.
+        let old_kind: Option<String> = c
+            .query_row("SELECT kind FROM atoms WHERE id=?1", [id], |r| r.get(0))
+            .ok();
         c.execute(
             "UPDATE atoms SET text=?2, kind=?3, signature=?4, updated_at=?5 WHERE id=?1",
             params![id, text, kind, sig, now_secs()],
-        )
-        .map(|_| ())
+        )?;
+        if let Some(old) = old_kind {
+            if old != kind {
+                let now = now_secs();
+                c.execute(
+                    "INSERT INTO feedback(atom_id, kind, from_kind, to_kind, decision, created_at)
+                     VALUES (?1, ?2, ?3, ?4, 'reclassify', ?5)",
+                    params![id, kind, old, kind, now],
+                )?;
+                c.execute(
+                    "INSERT INTO corrections(text, wrong_kind, right_kind, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![text, old, kind, now],
+                )?;
+            }
+        }
+        Ok(())
     });
     Ok(())
+}
+
+/// Record an approve/reject decision with the atom's kind/confidence/substantiation.
+fn record_feedback(c: &Connection, id: i64, decision: &str) {
+    let _ = c.execute(
+        "INSERT INTO feedback(atom_id, kind, decision, confidence, substantiation, created_at)
+         SELECT id, kind, ?2, confidence, substantiation, ?3 FROM atoms WHERE id=?1",
+        params![id, decision, now_secs()],
+    );
 }
 
 #[tauri::command]

@@ -135,6 +135,9 @@ export interface Atom {
   source_path: string;
   source_heading: string | null;
   confidence: number;
+  substantiation: number;
+  evidence: string | null;
+  auto_approved: boolean;
   status: string;
   created_at: number;
 }
@@ -167,6 +170,11 @@ export interface AtomsSettings {
   enabled_kinds: string[];
   infer_relationships: boolean;
   min_confidence: number;
+  auto_approve: boolean;
+  fact_min_confidence: number;
+  fact_min_substantiation: number;
+  signal_min_sources: number;
+  adaptive: boolean;
 }
 
 export interface AtomFilter {

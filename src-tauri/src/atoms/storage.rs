@@ -41,8 +41,43 @@ pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
            source_path TEXT PRIMARY KEY,
            content_hash TEXT NOT NULL,
            synthesized_at INTEGER NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS feedback(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           atom_id INTEGER,
+           kind TEXT,
+           from_kind TEXT,
+           to_kind TEXT,
+           decision TEXT NOT NULL,
+           confidence REAL,
+           substantiation REAL,
+           created_at INTEGER NOT NULL
+         );
+
+         CREATE TABLE IF NOT EXISTS corrections(
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           text TEXT NOT NULL,
+           wrong_kind TEXT NOT NULL,
+           right_kind TEXT NOT NULL,
+           created_at INTEGER NOT NULL
          );",
-    )
+    )?;
+    migrate(conn);
+    Ok(())
+}
+
+/// Add columns introduced after the first release. CREATE TABLE IF NOT EXISTS
+/// won't add columns to an existing table, so ALTER and ignore "duplicate
+/// column" errors.
+fn migrate(conn: &Connection) {
+    for stmt in [
+        "ALTER TABLE atoms ADD COLUMN substantiation REAL DEFAULT 0.5",
+        "ALTER TABLE atoms ADD COLUMN evidence TEXT",
+        "ALTER TABLE atoms ADD COLUMN auto_approved INTEGER DEFAULT 0",
+    ] {
+        let _ = conn.execute(stmt, []); // ok to fail when the column already exists
+    }
 }
 
 /// A stable content hash for incremental synthesis (skip unchanged notes).

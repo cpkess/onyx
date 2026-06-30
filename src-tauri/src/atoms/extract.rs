@@ -12,11 +12,51 @@ use crate::{atoms, index};
 use super::{load_settings, now_secs, storage, with_atoms};
 
 const SYSTEM: &str = "You extract atomic units of knowledge from a document excerpt. Output ONLY a \
-    JSON array. Each item: {\"kind\": one of [fact, signal, insight, pain_point, claim, action_item, \
-    decision], \"text\": a single self-contained statement, \"confidence\": number 0..1}. An atom is \
-    the SMALLEST meaningful, reusable piece of understanding — not a summary. Each text must stand on \
-    its own without the source. A passage may yield zero atoms. Respond with the JSON array only, no \
-    prose, no markdown.";
+    JSON array; each item: {\"kind\": ..., \"text\": a single self-contained statement, \
+    \"confidence\": 0..1, \"substantiation\": 0..1, \"evidence\": \"an exact quote from the excerpt \
+    that backs the statement, or 'none'\"}.\n\n\
+    An atom is the SMALLEST self-contained, reusable unit — not a summary. Classify by EVIDENCE:\n\
+    - claim: a bare assertion the source does NOT back with data, citation, or objective \
+    verifiability. This is the DEFAULT. substantiation < 0.4, evidence usually 'none'.\n\
+    - fact: objective and verifiable, backed by data/numbers/citation/definition present in the text. \
+    substantiation > 0.7 and evidence MUST quote the supporting text.\n\
+    - insight: an interpretation that explains WHY or what something MEANS (causal/synthesizing), not \
+    a raw observation.\n\
+    - pain_point: a stated friction, unmet need, or frustration.\n\
+    - action_item: a concrete next action or task.\n\
+    - decision: a choice that was made.\n\
+    Do NOT output 'signal' — recurring patterns are detected separately.\n\n\
+    KEY RULE: default to claim unless the text substantiates the statement; a confident tone is NOT \
+    substantiation, only evidence is.\n\
+    Examples: 'Revenue grew 23% in Q3 (see chart)' → fact, evidence 'grew 23% in Q3'. \
+    'Our pricing is too high' → claim. 'Adoption lags because onboarding is confusing' → insight. \
+    'Ship the fix by Friday' → action_item.\n\
+    Respond with the JSON array only, no prose, no markdown.";
+
+/// Recent user reclassifications, injected so the model learns this vault's
+/// distinctions over time. Empty string when there are none.
+fn learned_exemplars(app: &AppHandle) -> String {
+    let rows = with_atoms(app, |c| {
+        let mut s = c.prepare(
+            "SELECT text, wrong_kind, right_kind FROM corrections ORDER BY id DESC LIMIT 10",
+        )?;
+        let v: Vec<(String, String, String)> = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .filter_map(|x| x.ok())
+            .collect();
+        Ok(v)
+    })
+    .unwrap_or_default();
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n\nThe user has corrected classifications before — follow these:\n");
+    for (text, wrong, right) in rows {
+        let t: String = text.chars().take(120).collect();
+        out.push_str(&format!("- \"{t}\" is a {right}, not a {wrong}.\n"));
+    }
+    out
+}
 
 fn json_array(s: &str) -> Option<Vec<serde_json::Value>> {
     let start = s.find('[')?;
@@ -75,13 +115,22 @@ pub async fn synthesize_note(app: &AppHandle, path: &str) -> Result<usize, Strin
         return Ok(0);
     }
 
+    // System prompt = rubric + the user's learned reclassifications.
+    let system = format!("{SYSTEM}{}", learned_exemplars(app));
+    // Effective (feedback-adapted) auto-approval thresholds for this run.
+    let thr = with_atoms(app, |c| Ok(super::policy::effective_thresholds(c, &settings)))
+        .unwrap_or(super::policy::Thresholds {
+            fact_conf: settings.fact_min_confidence,
+            fact_sub: settings.fact_min_substantiation,
+        });
+
     let mut added = 0usize;
     for (idx, chunk) in index::chunk_content(&content, 1500) {
         if chunk.trim().len() < 80 {
             continue;
         }
         let messages = vec![
-            ChatMessage { role: "system".into(), content: SYSTEM.into() },
+            ChatMessage { role: "system".into(), content: system.clone() },
             ChatMessage { role: "user".into(), content: chunk.chars().take(4000).collect() },
         ];
         let out = match ai::chat_complete(&cfg, messages).await {
@@ -96,7 +145,21 @@ pub async fn synthesize_note(app: &AppHandle, path: &str) -> Result<usize, Strin
                 continue;
             }
             let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
+            let substantiation = item
+                .get("substantiation")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(if kind == "fact" { 0.7 } else { 0.3 });
+            let evidence = item
+                .get("evidence")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"))
+                .map(|s| s.to_string());
             let sig = storage::signature(&kind, &text);
+            let auto = settings.auto_approve
+                && super::policy::auto_decision(&kind, confidence, substantiation, &thr);
+            let status = if auto { "approved" } else { "pending" };
+
             let inserted = with_atoms(app, |c| {
                 let exists: i64 = c.query_row(
                     "SELECT COUNT(*) FROM atoms WHERE source_path=?1 AND signature=?2",
@@ -108,10 +171,12 @@ pub async fn synthesize_note(app: &AppHandle, path: &str) -> Result<usize, Strin
                 }
                 let now = now_secs();
                 c.execute(
-                    "INSERT INTO atoms(kind, text, source_path, source_chunk, confidence, status,
-                                       signature, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6, ?7, ?7)",
-                    params![kind, text, path, idx, confidence, sig, now],
+                    "INSERT INTO atoms(kind, text, source_path, source_chunk, confidence,
+                                       substantiation, evidence, auto_approved, status, signature,
+                                       created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                    params![kind, text, path, idx, confidence, substantiation, evidence,
+                            auto as i64, status, sig, now],
                 )?;
                 Ok(true)
             })
@@ -181,5 +246,44 @@ pub async fn synthesize_vault(app: &AppHandle) -> usize {
             break;
         }
     }
+    post_synthesis(app).await;
     added
+}
+
+/// After extraction: embed any approved atoms not yet vectorized (so AI chat /
+/// tools can retrieve them) and derive statistical Signals from corroboration.
+pub async fn post_synthesis(app: &AppHandle) {
+    let cfg = ai::load_config(app);
+    if !cfg.embed_model.is_empty() {
+        let to_embed: Vec<(i64, String)> = with_atoms(app, |c| {
+            // Ids already embedded (empty if the vec table doesn't exist yet).
+            let embedded: std::collections::HashSet<i64> = c
+                .prepare("SELECT atom_id FROM atom_vec")
+                .ok()
+                .and_then(|mut s| {
+                    s.query_map([], |r| r.get::<_, i64>(0))
+                        .ok()
+                        .map(|it| it.filter_map(|x| x.ok()).collect())
+                })
+                .unwrap_or_default();
+            let mut s = c.prepare("SELECT id, text FROM atoms WHERE status='approved'")?;
+            let rows = s
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok())
+                .filter(|(id, _)| !embedded.contains(id))
+                .collect();
+            Ok(rows)
+        })
+        .unwrap_or_default();
+
+        for batch in to_embed.chunks(32) {
+            let inputs: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
+            if let Ok(vecs) = ai::embed(&cfg, inputs).await {
+                for ((id, _), v) in batch.iter().zip(vecs.into_iter()) {
+                    let _ = with_atoms(app, |c| storage::upsert_atom_vec(c, *id, &v));
+                }
+            }
+        }
+    }
+    super::signals::detect(app).await;
 }
