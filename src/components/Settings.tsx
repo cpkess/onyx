@@ -535,11 +535,25 @@ const ATOM_KIND_LABELS: [string, string][] = [
 
 function AtomsSettingsTab() {
   const [s, setS] = useState<AtomsSettings | null>(null);
+  const [rebuilt, setRebuilt] = useState(false);
 
   useEffect(() => {
     api.atomsGetSettings().then(setS).catch(() => {});
   }, []);
   if (!s) return <p className="text-sm text-neutral-400">Loading…</p>;
+
+  const rebuild = () => {
+    if (
+      !window.confirm(
+        "Rebuild all atoms? This clears every extracted atom and re-runs synthesis across the vault " +
+          "with the current rules. Your notes are not changed. This can take a while."
+      )
+    )
+      return;
+    api.atomsRebuild().catch(() => {});
+    setRebuilt(true);
+    setTimeout(() => setRebuilt(false), 4000);
+  };
 
   const update = (patch: Partial<AtomsSettings>) => {
     const next = { ...s, ...patch };
@@ -630,10 +644,31 @@ function AtomsSettingsTab() {
         />
       </Row>
 
+      <Row>
+        <label className={label}>Rebuild knowledge base</label>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={rebuild}
+            className="rounded-md bg-black/5 px-3 py-1.5 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
+          >
+            Rebuild atoms…
+          </button>
+          {rebuilt && (
+            <span className="text-xs text-green-600 dark:text-green-400">
+              Started — watch progress in the ⚛ tab.
+            </span>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-neutral-400">
+          Clears all atoms and re-extracts the whole vault with the current rules. Use this to
+          re-classify notes synthesized before a rules change. Notes are never modified.
+        </p>
+      </Row>
+
       <p className="text-xs text-neutral-400">
         Claims are the weakest atoms (auto-approved); Facts auto-approve only when substantiated;
         Insights, Decisions and Pain points always go to review. Atoms live in a separate database and
-        never modify your notes. To re-classify existing notes with the new rules, use ⚛ → Rebuild.
+        never modify your notes.
       </p>
     </div>
   );
