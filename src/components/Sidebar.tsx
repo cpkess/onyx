@@ -14,7 +14,6 @@ import { appendTags, insertText, scrollToHeading } from "../editor/activeEditor"
 import { ChatPanel } from "./ChatPanel";
 import { AiTools } from "./AiTools";
 import { WeavePanel } from "./WeavePanel";
-import { CalendarTab } from "./CalendarTab";
 import { NightTab } from "../features/night/NightTab";
 import { AtomsTab } from "../features/atoms/AtomsTab";
 
@@ -38,14 +37,10 @@ export function Sidebar() {
   }, [activeTab]);
 
   const tabs: [SidebarTab, string][] = [
-    ["links", "Links"],
-    ["outline", "Outline"],
-    ["tags", "Tags"],
-    ["marks", "★"],
-    ["ai", "AI"],
-    ["calendar", "📅"],
-    ["night", "🌙"],
-    ["atoms", "⚛"],
+    ["note", "Note"],
+    ["assist", "Assist"],
+    ["atoms", "Atoms"],
+    ["overnight", "Overnight"],
   ];
 
   return (
@@ -66,14 +61,10 @@ export function Sidebar() {
         ))}
       </div>
       <div className="flex-1 overflow-y-auto">
-        {tab === "links" && <LinksTab activeTab={activeTab} content={content} />}
-        {tab === "outline" && <OutlineTab content={content} />}
-        {tab === "tags" && <TagsTab />}
-        {tab === "marks" && <BookmarksTab />}
-        {tab === "ai" && <AiTab activeTab={activeTab} />}
-        {tab === "calendar" && <CalendarTab />}
-        {tab === "night" && <NightTab />}
+        {tab === "note" && <NoteTab activeTab={activeTab} content={content} />}
+        {tab === "assist" && <AiTab activeTab={activeTab} />}
         {tab === "atoms" && <AtomsTab />}
+        {tab === "overnight" && <NightTab />}
       </div>
     </div>
   );
@@ -119,6 +110,63 @@ function AiTab({ activeTab }: { activeTab: string | null }) {
         {tool === "tools" && <AiTools />}
         {tool === "weave" && <WeavePanel key={activeTab ?? ""} />}
       </div>
+    </div>
+  );
+}
+
+// ---- Note: everything about the open note (outline + links + knowledge + tags) ----
+
+function Collapsible({
+  title,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-b border-black/5 dark:border-white/5">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-1 px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500 hover:bg-black/5 dark:hover:bg-white/5"
+      >
+        <span className="inline-block w-3 text-neutral-400">{open ? "▾" : "▸"}</span>
+        {title}
+      </button>
+      {open && <div className="pb-1">{children}</div>}
+    </div>
+  );
+}
+
+const TAG_RE = /(?:^|\s)#([\w/-]+)/g;
+
+function NoteTab({ activeTab, content }: { activeTab: string | null; content: string }) {
+  if (!activeTab) return <Empty>No note open.</Empty>;
+  const tags = Array.from(new Set(Array.from(content.matchAll(TAG_RE)).map((m) => m[1])));
+  return (
+    <div>
+      <Collapsible title="Outline">
+        <OutlineTab content={content} />
+      </Collapsible>
+      {tags.length > 0 && (
+        <Collapsible title="Tags" defaultOpen={false}>
+          <div className="flex flex-wrap gap-1 px-2 pb-1">
+            {tags.map((t) => (
+              <span
+                key={t}
+                className="rounded-full bg-black/5 px-2 py-0.5 text-xs text-[#56b6c2] dark:bg-white/10"
+              >
+                #{t}
+              </span>
+            ))}
+          </div>
+        </Collapsible>
+      )}
+      <Collapsible title="Links & knowledge">
+        <LinksTab activeTab={activeTab} content={content} />
+      </Collapsible>
     </div>
   );
 }
@@ -278,92 +326,6 @@ function OutlineTab({ content }: { content: string }) {
         >
           {h.text}
         </button>
-      ))}
-    </div>
-  );
-}
-
-// ---- Tags ----
-
-function TagsTab() {
-  const openNote = useStore((s) => s.openNote);
-  const [tags, setTags] = useState<[string, number][]>([]);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [notes, setNotes] = useState<string[]>([]);
-
-  useEffect(() => {
-    api.getTags().then(setTags).catch(() => setTags([]));
-  }, []);
-
-  const toggle = (tag: string) => {
-    if (expanded === tag) return setExpanded(null);
-    setExpanded(tag);
-    api.getNotesByTag(tag).then(setNotes).catch(() => setNotes([]));
-  };
-
-  if (tags.length === 0) return <Empty>No tags in this vault.</Empty>;
-  return (
-    <div className="px-2 py-2">
-      {tags.map(([tag, count]) => (
-        <div key={tag}>
-          <button
-            onClick={() => toggle(tag)}
-            className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-black/5 dark:hover:bg-white/5"
-          >
-            <span className="truncate text-[#56b6c2]">#{tag}</span>
-            <span className="text-xs text-neutral-400">{count}</span>
-          </button>
-          {expanded === tag &&
-            notes.map((p) => (
-              <button
-                key={p}
-                onClick={() => openNote(p)}
-                className="block w-full truncate rounded py-1 pl-5 pr-2 text-left text-xs text-neutral-500 hover:bg-black/5 dark:hover:bg-white/5"
-              >
-                {noteName(p)}
-              </button>
-            ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---- Bookmarks ----
-
-function BookmarksTab() {
-  const bookmarks = useStore((s) => s.bookmarks);
-  const activeTab = useStore((s) => s.activeTab);
-  const openNote = useStore((s) => s.openNote);
-  const toggleBookmark = useStore((s) => s.toggleBookmark);
-
-  return (
-    <div className="px-2 py-2">
-      {activeTab && (
-        <button
-          onClick={() => toggleBookmark(activeTab)}
-          className="mb-2 w-full rounded-md bg-black/5 px-2 py-1 text-xs text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
-        >
-          {bookmarks.includes(activeTab) ? "★ Remove current note" : "☆ Bookmark current note"}
-        </button>
-      )}
-      {bookmarks.length === 0 && <Empty>No bookmarks yet.</Empty>}
-      {bookmarks.map((p) => (
-        <div key={p} className="group flex items-center">
-          <button
-            onClick={() => openNote(p)}
-            className="flex-1 truncate rounded p-1.5 text-left text-sm text-neutral-700 hover:bg-black/5 dark:text-neutral-200 dark:hover:bg-white/5"
-          >
-            {noteName(p)}
-          </button>
-          <button
-            onClick={() => toggleBookmark(p)}
-            className="px-1.5 text-xs text-neutral-400 opacity-0 group-hover:opacity-100"
-            title="Remove"
-          >
-            ✕
-          </button>
-        </div>
       ))}
     </div>
   );

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/api";
 import { useStore } from "./state/store";
-import { FileTree } from "./components/FileTree";
+import { LeftSidebar } from "./components/LeftSidebar";
 import { PaneView } from "./components/PaneView";
 import { Sidebar } from "./components/Sidebar";
 import { CommandPalette } from "./components/CommandPalette";
@@ -129,7 +129,7 @@ export default function App() {
       <Toolbar />
       <div className="flex min-h-0 flex-1">
         <aside className="w-60 shrink-0 overflow-hidden border-r border-black/10 bg-neutral-50 dark:border-white/10 dark:bg-neutral-900">
-          <FileTree />
+          <LeftSidebar />
         </aside>
         <main className="flex min-w-0 flex-1">
           {panes.map((p, i) => (

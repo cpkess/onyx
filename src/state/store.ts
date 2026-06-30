@@ -29,7 +29,8 @@ import {
 
 type Theme = "dark" | "light";
 export type PaletteMode = "files" | "commands" | "semantic" | "atoms";
-export type SidebarTab = "links" | "outline" | "tags" | "marks" | "ai" | "calendar" | "night" | "atoms";
+export type SidebarTab = "note" | "assist" | "atoms" | "overnight";
+export type LeftTab = "files" | "bookmarks" | "tags" | "calendar";
 export type AiTool = "assist" | "chat" | "tools" | "weave";
 
 interface AppStore {
@@ -51,6 +52,7 @@ interface AppStore {
   settingsOpen: boolean;
   sidebarOpen: boolean;
   sidebarTab: SidebarTab;
+  leftTab: LeftTab;
   aiTool: AiTool;
   loading: boolean;
 
@@ -91,6 +93,7 @@ interface AppStore {
   setSidebarOpen: (open: boolean) => void;
   toggleSidebar: () => void;
   setSidebarTab: (tab: SidebarTab) => void;
+  setLeftTab: (tab: LeftTab) => void;
   setAiTool: (tool: AiTool) => void;
   openAiTool: (tool: AiTool) => void;
 }
@@ -158,7 +161,8 @@ export const useStore = create<AppStore>((set, get) => {
     graphOpen: false,
     settingsOpen: false,
     sidebarOpen: true,
-    sidebarTab: "links",
+    sidebarTab: "note",
+    leftTab: "files",
     aiTool: "assist",
     loading: false,
 
@@ -409,8 +413,9 @@ export const useStore = create<AppStore>((set, get) => {
     setSidebarOpen: (open) => set({ sidebarOpen: open }),
     toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
     setSidebarTab: (tab) => set({ sidebarTab: tab }),
+    setLeftTab: (tab) => set({ leftTab: tab }),
     setAiTool: (tool) => set({ aiTool: tool }),
     openAiTool: (tool) =>
-      set({ sidebarOpen: true, sidebarTab: "ai", aiTool: tool }),
+      set({ sidebarOpen: true, sidebarTab: "assist", aiTool: tool }),
   };
 });

@@ -63,10 +63,7 @@ export const commands: Command[] = [
     id: "open-calendar",
     name: "Open calendar",
     keys: "mod+shift+c",
-    run: () => {
-      s().setSidebarOpen(true);
-      s().setSidebarTab("calendar");
-    },
+    run: () => s().setLeftTab("calendar"),
   },
   {
     id: "toggle-sidebar",
