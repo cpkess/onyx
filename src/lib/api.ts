@@ -67,6 +67,7 @@ export interface AiConfig {
   base_url: string;
   chat_model: string;
   embed_model: string;
+  parallel_requests: number;
 }
 
 export interface ChatMessage {
@@ -171,10 +172,8 @@ export interface AtomsSettings {
   infer_relationships: boolean;
   min_confidence: number;
   auto_approve: boolean;
-  fact_min_confidence: number;
-  fact_min_substantiation: number;
+  auto_approve_confidence: number;
   signal_min_sources: number;
-  adaptive: boolean;
 }
 
 export interface AtomFilter {
@@ -321,6 +320,7 @@ export const api = {
   getPendingAtoms: () => invoke<AtomGroup[]>("get_pending_atoms"),
   getAtoms: (filter: AtomFilter) => invoke<Atom[]>("get_atoms", { filter }),
   approveAtom: (id: number) => invoke<void>("approve_atom", { id }),
+  atomsApproveAll: () => invoke<number>("atoms_approve_all"),
   rejectAtom: (id: number) => invoke<void>("reject_atom", { id }),
   editAtom: (id: number, text: string, kind: string) =>
     invoke<void>("edit_atom", { id, text, kind }),

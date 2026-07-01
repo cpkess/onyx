@@ -592,45 +592,28 @@ function AtomsSettingsTab() {
       />
 
       <Checkbox
-        label="Auto-approve (skip review for claims & well-substantiated facts)"
+        label="Auto-approve high-confidence atoms (skip review)"
         checked={s.auto_approve}
         onChange={(v) => update({ auto_approve: v })}
       />
       {s.auto_approve && (
-        <div className="mb-3 ml-6 space-y-2">
+        <div className="mb-3 ml-6">
           <Row>
-            <label className={label}>Fact auto-approve — min confidence</label>
+            <label className={label}>Auto-approve confidence</label>
             <input
               type="range"
               min={0.5}
               max={0.95}
               step={0.05}
-              value={s.fact_min_confidence}
-              onChange={(e) => update({ fact_min_confidence: Number(e.target.value) })}
-              className="w-full accent-[var(--onyx-accent)]"
-            />
-            <span className="text-xs text-neutral-400">{Math.round(s.fact_min_confidence * 100)}%</span>
-          </Row>
-          <Row>
-            <label className={label}>Fact auto-approve — min substantiation</label>
-            <input
-              type="range"
-              min={0.5}
-              max={0.95}
-              step={0.05}
-              value={s.fact_min_substantiation}
-              onChange={(e) => update({ fact_min_substantiation: Number(e.target.value) })}
+              value={s.auto_approve_confidence}
+              onChange={(e) => update({ auto_approve_confidence: Number(e.target.value) })}
               className="w-full accent-[var(--onyx-accent)]"
             />
             <span className="text-xs text-neutral-400">
-              {Math.round(s.fact_min_substantiation * 100)}%
+              Atoms at or above {Math.round(s.auto_approve_confidence * 100)}% confidence are approved
+              automatically; the rest go to Review.
             </span>
           </Row>
-          <Checkbox
-            label="Adapt thresholds from my approve/reject feedback"
-            checked={s.adaptive}
-            onChange={(v) => update({ adaptive: v })}
-          />
         </div>
       )}
       <Row>
@@ -687,6 +670,7 @@ function AiSettings() {
     base_url: "http://localhost:1234/v1",
     chat_model: "",
     embed_model: "",
+    parallel_requests: 4,
   });
   const [models, setModels] = useState<string[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -779,6 +763,23 @@ function AiSettings() {
           <label className={label}>Embedding model</label>
           <ModelSelect value={config.embed_model} models={models} onChange={(v) => setConfig({ ...config, embed_model: v })} />
         </div>
+      </div>
+      <div>
+        <label className={label}>Parallel requests</label>
+        <input
+          type="number"
+          min={1}
+          max={8}
+          value={config.parallel_requests}
+          onChange={(e) =>
+            setConfig({ ...config, parallel_requests: Math.max(1, Math.min(8, Number(e.target.value) || 1)) })
+          }
+          className={field + " w-20"}
+        />
+        <p className="mt-1 text-xs text-neutral-400">
+          How many LLM requests to run at once for synthesis and document import. Higher is faster if
+          your machine can handle concurrent requests (1–8).
+        </p>
       </div>
       <div className="rounded-lg border border-black/10 p-3 dark:border-white/10">
         <div className="mb-2 flex items-center justify-between">

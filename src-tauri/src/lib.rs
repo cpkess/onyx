@@ -94,6 +94,7 @@ pub fn run() {
             atoms::get_pending_atoms,
             atoms::get_atoms,
             atoms::approve_atom,
+            atoms::atoms_approve_all,
             atoms::reject_atom,
             atoms::edit_atom,
             atoms::merge_atoms,

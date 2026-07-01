@@ -40,28 +40,21 @@ pub struct AtomsSettings {
     pub enabled_kinds: Vec<String>,
     pub infer_relationships: bool,
     pub min_confidence: f64,
-    /// Master switch for stakes-tiered auto-approval (skip review).
+    /// Master switch for auto-approval (skip review).
     #[serde(default = "default_true")]
     pub auto_approve: bool,
-    #[serde(default = "default_fact_conf")]
-    pub fact_min_confidence: f64,
-    #[serde(default = "default_fact_sub")]
-    pub fact_min_substantiation: f64,
+    /// Auto-approve any atom whose confidence is at least this (kind-agnostic).
+    #[serde(default = "default_auto_conf")]
+    pub auto_approve_confidence: f64,
     /// Distinct sources required to mint a Signal atom.
     #[serde(default = "default_signal_sources")]
     pub signal_min_sources: i64,
-    /// Adapt auto-approval thresholds from approve/reject feedback.
-    #[serde(default = "default_true")]
-    pub adaptive: bool,
 }
 
 fn default_true() -> bool {
     true
 }
-fn default_fact_conf() -> f64 {
-    0.8
-}
-fn default_fact_sub() -> f64 {
+fn default_auto_conf() -> f64 {
     0.7
 }
 fn default_signal_sources() -> i64 {
@@ -75,10 +68,8 @@ impl Default for AtomsSettings {
             infer_relationships: true,
             min_confidence: 0.0,
             auto_approve: true,
-            fact_min_confidence: 0.8,
-            fact_min_substantiation: 0.7,
+            auto_approve_confidence: 0.7,
             signal_min_sources: 3,
-            adaptive: true,
         }
     }
 }
@@ -468,6 +459,31 @@ pub fn approve_atom(app: AppHandle, id: i64) -> Result<(), String> {
         relate::relate_atom(&app2, id).await;
     });
     Ok(())
+}
+
+/// Approve every pending atom at once (clears the review queue).
+#[tauri::command]
+pub fn atoms_approve_all(app: AppHandle) -> Result<i64, String> {
+    let n = with_atoms(&app, |c| {
+        let now = now_secs();
+        c.execute(
+            "INSERT INTO feedback(atom_id, kind, decision, confidence, substantiation, created_at)
+             SELECT id, kind, 'approve', confidence, substantiation, ?1 FROM atoms WHERE status='pending'",
+            params![now],
+        )?;
+        let changed = c.execute(
+            "UPDATE atoms SET status='approved', updated_at=?1 WHERE status='pending'",
+            params![now],
+        )?;
+        Ok(changed as i64)
+    })
+    .unwrap_or(0);
+    // Embed the newly-approved atoms + refresh Signals in the background.
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        extract::post_synthesis(&app2).await;
+    });
+    Ok(n)
 }
 
 #[tauri::command]

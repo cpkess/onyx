@@ -5,6 +5,8 @@ use rusqlite::params;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter, Manager};
 
+use futures_util::StreamExt;
+
 use crate::ai::{self, ChatMessage};
 use crate::vault::{self, AppState};
 use crate::{atoms, index};
@@ -67,6 +69,59 @@ fn json_array(s: &str) -> Option<Vec<serde_json::Value>> {
     serde_json::from_str(&s[start..=end]).ok()
 }
 
+/// Parse one model-produced item and insert it as an atom (deduped by
+/// signature). Returns true if a new atom was inserted.
+fn insert_atom_item(
+    app: &AppHandle,
+    settings: &super::AtomsSettings,
+    threshold: f64,
+    path: &str,
+    idx: i64,
+    item: &serde_json::Value,
+) -> bool {
+    let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    let text = item.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if text.is_empty() || !settings.enabled_kinds.iter().any(|k| k == &kind) {
+        return false;
+    }
+    let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
+    let substantiation = item
+        .get("substantiation")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(if kind == "fact" { 0.7 } else { 0.3 });
+    let evidence = item
+        .get("evidence")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"))
+        .map(|s| s.to_string());
+    let sig = storage::signature(&kind, &text);
+    let auto = settings.auto_approve && super::policy::auto_decision(confidence, threshold);
+    let status = if auto { "approved" } else { "pending" };
+
+    with_atoms(app, |c| {
+        let exists: i64 = c.query_row(
+            "SELECT COUNT(*) FROM atoms WHERE source_path=?1 AND signature=?2",
+            params![path, sig],
+            |r| r.get(0),
+        )?;
+        if exists > 0 {
+            return Ok(false);
+        }
+        let now = now_secs();
+        c.execute(
+            "INSERT INTO atoms(kind, text, source_path, source_chunk, confidence,
+                               substantiation, evidence, auto_approved, status, signature,
+                               created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+            params![kind, text, path, idx, confidence, substantiation, evidence,
+                    auto as i64, status, sig, now],
+        )?;
+        Ok(true)
+    })
+    .unwrap_or(false)
+}
+
 fn vault_root(app: &AppHandle) -> Option<std::path::PathBuf> {
     let st = app.state::<AppState>();
     let g = st.vault.lock().unwrap();
@@ -117,75 +172,34 @@ pub async fn synthesize_note(app: &AppHandle, path: &str) -> Result<usize, Strin
 
     // System prompt = rubric + the user's learned reclassifications.
     let system = format!("{SYSTEM}{}", learned_exemplars(app));
-    // Effective (feedback-adapted) auto-approval thresholds for this run.
-    let thr = with_atoms(app, |c| Ok(super::policy::effective_thresholds(c, &settings)))
-        .unwrap_or(super::policy::Thresholds {
-            fact_conf: settings.fact_min_confidence,
-            fact_sub: settings.fact_min_substantiation,
-        });
+    let threshold = settings.auto_approve_confidence;
+    let parallel = cfg.parallel_requests.clamp(1, 8);
 
-    let mut added = 0usize;
-    for (idx, chunk) in index::chunk_content(&content, 1500) {
-        if chunk.trim().len() < 80 {
-            continue;
-        }
+    let chunks: Vec<(i64, String)> = index::chunk_content(&content, 1500)
+        .into_iter()
+        .filter(|(_, c)| c.trim().len() >= 80)
+        .collect();
+
+    // Per-chunk LLM calls run with bounded concurrency (the machine can serve
+    // several at once); each result's DB inserts are serialized by the mutex.
+    let sys = &system;
+    let cfgr = &cfg;
+    let setr = &settings;
+    let added: usize = futures_util::stream::iter(chunks.into_iter().map(|(idx, chunk)| async move {
         let messages = vec![
-            ChatMessage { role: "system".into(), content: system.clone() },
+            ChatMessage { role: "system".into(), content: sys.clone() },
             ChatMessage { role: "user".into(), content: chunk.chars().take(4000).collect() },
         ];
-        let out = match ai::chat_complete(&cfg, messages).await {
+        let out = match ai::chat_complete(cfgr, messages).await {
             Ok(o) => o,
-            Err(_) => continue,
+            Err(_) => return 0usize,
         };
-        let Some(arr) = json_array(&out) else { continue };
-        for item in arr {
-            let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-            let text = item.get("text").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-            if text.is_empty() || !settings.enabled_kinds.iter().any(|k| k == &kind) {
-                continue;
-            }
-            let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
-            let substantiation = item
-                .get("substantiation")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(if kind == "fact" { 0.7 } else { 0.3 });
-            let evidence = item
-                .get("evidence")
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("none"))
-                .map(|s| s.to_string());
-            let sig = storage::signature(&kind, &text);
-            let auto = settings.auto_approve
-                && super::policy::auto_decision(&kind, confidence, substantiation, &thr);
-            let status = if auto { "approved" } else { "pending" };
-
-            let inserted = with_atoms(app, |c| {
-                let exists: i64 = c.query_row(
-                    "SELECT COUNT(*) FROM atoms WHERE source_path=?1 AND signature=?2",
-                    params![path, sig],
-                    |r| r.get(0),
-                )?;
-                if exists > 0 {
-                    return Ok(false);
-                }
-                let now = now_secs();
-                c.execute(
-                    "INSERT INTO atoms(kind, text, source_path, source_chunk, confidence,
-                                       substantiation, evidence, auto_approved, status, signature,
-                                       created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
-                    params![kind, text, path, idx, confidence, substantiation, evidence,
-                            auto as i64, status, sig, now],
-                )?;
-                Ok(true)
-            })
-            .unwrap_or(false);
-            if inserted {
-                added += 1;
-            }
-        }
-    }
+        let Some(arr) = json_array(&out) else { return 0usize };
+        arr.iter().filter(|item| insert_atom_item(app, setr, threshold, path, idx, item)).count()
+    }))
+    .buffer_unordered(parallel)
+    .fold(0usize, |acc, n| async move { acc + n })
+    .await;
 
     // Record synthesis state so unchanged notes are skipped next time.
     with_atoms(app, |c| {

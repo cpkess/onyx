@@ -12,6 +12,14 @@ pub struct AiConfig {
     pub base_url: String,
     pub chat_model: String,
     pub embed_model: String,
+    /// How many LLM requests to run concurrently for batch work (extraction,
+    /// import). Clamped to 1–8 by callers.
+    #[serde(default = "default_parallel")]
+    pub parallel_requests: usize,
+}
+
+fn default_parallel() -> usize {
+    4
 }
 
 impl Default for AiConfig {
@@ -20,6 +28,7 @@ impl Default for AiConfig {
             base_url: "http://localhost:1234/v1".to_string(),
             chat_model: String::new(),
             embed_model: String::new(),
+            parallel_requests: 4,
         }
     }
 }

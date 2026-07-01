@@ -1513,29 +1513,36 @@ async fn build_import_markdown(
     use_llm: bool,
 ) -> String {
     use crate::import;
+    use futures_util::StreamExt;
     let ext = import::ext_of(path);
     let system = conversion_system(vocab);
+    let parallel = cfg.parallel_requests.clamp(1, 8);
 
-    // -- PDF page-by-page (vision + per-page text) --
+    // -- PDF page-by-page (vision + per-page text), pages processed concurrently --
     if use_llm && ext == "pdf" && import::has_poppler() {
         let pages = import::render_pdf_pages(path);
         if !pages.is_empty() {
             let total = pages.len();
-            let mut parts: Vec<String> = Vec::with_capacity(total);
-            for (idx, b64) in pages.iter().enumerate() {
-                let page_no = idx + 1;
-                let page_text = import::extract_pdf_page_text(path, page_no).unwrap_or_default();
-                let user_text = format!(
-                    "This image is page {page_no} of {total} of a document and shows the true \
-                     layout. The raw extracted text below is for verbatim accuracy.\n\nRAW TEXT:\n{page_text}"
-                );
-                let md = convert_part(cfg, &system, user_text, Some(b64)).await;
-                parts.push(md.filter(|s| !s.trim().is_empty()).unwrap_or(page_text));
-                let _ = app.emit(
-                    "import:progress",
-                    serde_json::json!({ "page": page_no, "total": total }),
-                );
-            }
+            let done = std::sync::atomic::AtomicUsize::new(0);
+            let sys = &system;
+            let doner = &done;
+            let parts: Vec<String> = futures_util::stream::iter(pages.into_iter().enumerate().map(
+                |(idx, b64)| async move {
+                    let page_no = idx + 1;
+                    let page_text = import::extract_pdf_page_text(path, page_no).unwrap_or_default();
+                    let user_text = format!(
+                        "This image is page {page_no} of {total} of a document and shows the true \
+                         layout. The raw extracted text below is for verbatim accuracy.\n\nRAW TEXT:\n{page_text}"
+                    );
+                    let md = convert_part(cfg, sys, user_text, Some(b64.as_str())).await;
+                    let d = doner.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    let _ = app.emit("import:progress", serde_json::json!({ "page": d, "total": total }));
+                    md.filter(|s| !s.trim().is_empty()).unwrap_or(page_text)
+                },
+            ))
+            .buffered(parallel) // preserves page order
+            .collect()
+            .await;
             return format!("# {title}\n\n{}", parts.join("\n\n"));
         }
         // poppler present but rendered nothing — fall through to the text path.
@@ -1553,15 +1560,18 @@ async fn build_import_markdown(
 
     let chunks = import::chunk_text(&raw, 8000);
     let total = chunks.len();
-    let mut parts: Vec<String> = Vec::with_capacity(total);
-    for (idx, chunk) in chunks.iter().enumerate() {
-        let md = convert_part(cfg, &system, chunk.clone(), None).await;
-        parts.push(md.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| chunk.clone()));
-        let _ = app.emit(
-            "import:progress",
-            serde_json::json!({ "page": idx + 1, "total": total }),
-        );
-    }
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let sys = &system;
+    let doner = &done;
+    let parts: Vec<String> = futures_util::stream::iter(chunks.into_iter().map(|chunk| async move {
+        let md = convert_part(cfg, sys, chunk.clone(), None).await;
+        let d = doner.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        let _ = app.emit("import:progress", serde_json::json!({ "page": d, "total": total }));
+        md.filter(|s| !s.trim().is_empty()).unwrap_or(chunk)
+    }))
+    .buffered(parallel)
+    .collect()
+    .await;
     format!("# {title}\n\n{}", parts.join("\n\n"))
 }
 

@@ -1,7 +1,6 @@
 import { Decoration } from "@codemirror/view";
 import type { NodeRule, RenderCtx } from "./core";
 import {
-  AtomsWidget,
   BulletWidget,
   CalloutWidget,
   CheckboxWidget,
@@ -93,7 +92,7 @@ const fencedCodeRule: NodeRule = (node, ctx) => {
   const endLine = lastContentLine(ctx, node.to);
   const fence = startLine.text.match(/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/);
   const lang = fence ? fence[1] : "";
-  if (lang === "mermaid" || lang === "dataview" || lang === "atoms") return; // handled by their own rules
+  if (lang === "mermaid" || lang === "dataview") return; // handled by their own rules
 
   const bodyLines: string[] = [];
   for (let l = startLine.number + 1; l < endLine.number; l++) {
@@ -138,25 +137,6 @@ const dataviewRule: NodeRule = (node, ctx) => {
   );
 };
 
-const atomsRule: NodeRule = (node, ctx) => {
-  if (node.name !== "FencedCode") return;
-  const startLine = ctx.state.doc.lineAt(node.from);
-  const endLine = lastContentLine(ctx, node.to);
-  const fence = startLine.text.match(/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/);
-  if (!fence || fence[1] !== "atoms") return;
-  if (ctx.rangeActive(node.from, endLine.to)) return; // editing: show source
-  const code: string[] = [];
-  for (let l = startLine.number + 1; l < endLine.number; l++) {
-    code.push(ctx.state.doc.line(l).text);
-  }
-  ctx.replace(
-    startLine.from,
-    endLine.to,
-    new AtomsWidget(code.join("\n"), ctx.cb.currentPath ?? null),
-    true
-  );
-};
-
 export const blockNodeRules: NodeRule[] = [
   blockquoteRule,
   quoteMarkRule,
@@ -167,5 +147,4 @@ export const blockNodeRules: NodeRule[] = [
   fencedCodeRule,
   mermaidRule,
   dataviewRule,
-  atomsRule,
 ];

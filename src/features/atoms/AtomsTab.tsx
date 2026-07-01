@@ -14,10 +14,10 @@ import { useStore } from "../../state/store";
 
 import { KIND_LABEL, ATOM_KINDS as KINDS } from "./kinds";
 
-type Sub = "review" | "discover" | "decisions" | "tensions";
+type Sub = "explore" | "review";
 
 export function AtomsTab() {
-  const [sub, setSub] = useState<Sub>("review");
+  const [sub, setSub] = useState<Sub>("explore");
   const [status, setStatus] = useState<AtomsStatus | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -65,11 +65,10 @@ export function AtomsTab() {
     fn().catch(() => setBusy(false));
   };
 
+  const pending = status?.pending ?? 0;
   const subs: [Sub, string][] = [
-    ["review", "Review"],
-    ["discover", "Discover"],
-    ["decisions", "Decisions"],
-    ["tensions", "Tensions"],
+    ["explore", "Explore"],
+    ["review", pending > 0 ? `Review (${pending})` : "Review"],
   ];
 
   return (
@@ -117,10 +116,8 @@ export function AtomsTab() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {sub === "explore" && <Explore key={refreshKey} />}
         {sub === "review" && <Review key={refreshKey} onChange={refreshStatus} />}
-        {sub === "discover" && <Discover key={refreshKey} />}
-        {sub === "decisions" && <Decisions key={refreshKey} />}
-        {sub === "tensions" && <Tensions key={refreshKey} />}
       </div>
     </div>
   );
@@ -165,8 +162,20 @@ function Review({ onChange }: { onChange: () => void }) {
       return n;
     });
 
+  const approveAll = async () => {
+    await api.atomsApproveAll().catch(() => {});
+    setGroups([]);
+    onChange();
+  };
+
   if (!groups) return <Empty>Loading…</Empty>;
-  if (groups.length === 0) return <Empty>No atoms to review. Run “Synthesize” above.</Empty>;
+  if (groups.length === 0)
+    return (
+      <Empty>
+        Nothing to review — high-confidence atoms are auto-approved. Lower the “Auto-approve confidence”
+        in Settings → Atoms to review more.
+      </Empty>
+    );
 
   const mergeSelected = async () => {
     const ids = [...selected];
@@ -181,12 +190,20 @@ function Review({ onChange }: { onChange: () => void }) {
     onChange();
   };
 
+  const pendingCount = groups.reduce((n, g) => n + g.atoms.length, 0);
+
   return (
     <div className="px-2 py-2">
+      <button
+        onClick={approveAll}
+        className="mb-2 w-full rounded-md bg-[var(--onyx-accent)] px-2 py-1 text-xs font-medium text-white hover:opacity-90"
+      >
+        Approve all {pendingCount}
+      </button>
       {selected.size >= 2 && (
         <button
           onClick={mergeSelected}
-          className="mb-2 w-full rounded-md bg-[var(--onyx-accent)] px-2 py-1 text-xs font-medium text-white hover:opacity-90"
+          className="mb-2 w-full rounded-md bg-black/5 px-2 py-1 text-xs text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
         >
           Merge {selected.size} selected atoms
         </button>
@@ -322,69 +339,73 @@ function AtomCard({
   );
 }
 
-// ---- Discover ----
+// ---- Explore (home): filter chips + folded-in Decisions/Tensions ----
 
-function Discover() {
+const EXPLORE_CHIPS: [string, string][] = [
+  ["all", "All"],
+  ["fact", "Fact"],
+  ["insight", "Insight"],
+  ["claim", "Claim"],
+  ["decision", "Decision"],
+  ["pain_point", "Pain point"],
+  ["signal", "Signal"],
+  ["action_item", "Action"],
+  ["contradictions", "⚡ Contradictions"],
+];
+
+function Explore() {
   const openNote = useStore((s) => s.openNote);
-  const [kind, setKind] = useState("");
+  const [chip, setChip] = useState("all");
   const [query, setQuery] = useState("");
-  const [relation, setRelation] = useState("");
   const [atoms, setAtoms] = useState<Atom[]>([]);
 
+  const special = chip === "contradictions" || chip === "decision";
   const load = useCallback(() => {
+    if (special) return;
     api
-      .getAtoms({
-        kind: kind || undefined,
-        query: query || undefined,
-        relation: relation || undefined,
-      })
+      .getAtoms({ kind: chip === "all" ? undefined : chip, query: query || undefined })
       .then(setAtoms)
       .catch(() => setAtoms([]));
-  }, [kind, query, relation]);
+  }, [chip, query, special]);
   useEffect(() => {
-    const id = window.setTimeout(load, 200);
+    const id = window.setTimeout(load, 150);
     return () => window.clearTimeout(id);
   }, [load]);
 
   return (
     <div className="px-2 py-2">
-      <div className="mb-2 space-y-1.5">
+      <div className="mb-2 flex flex-wrap gap-1">
+        {EXPLORE_CHIPS.map(([k, lbl]) => (
+          <button
+            key={k}
+            onClick={() => setChip(k)}
+            className={`rounded-full px-2 py-0.5 text-xs ${
+              chip === k
+                ? "bg-[var(--onyx-accent)] text-white"
+                : "bg-black/5 text-neutral-600 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-300"
+            }`}
+          >
+            {lbl}
+          </button>
+        ))}
+      </div>
+      {!special && (
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search knowledge…"
-          className="w-full rounded border border-black/10 bg-white px-2 py-1 text-sm dark:border-white/15 dark:bg-neutral-800"
+          className="mb-2 w-full rounded border border-black/10 bg-white px-2 py-1 text-sm dark:border-white/15 dark:bg-neutral-800"
         />
-        <div className="flex gap-1.5">
-          <select
-            value={kind}
-            onChange={(e) => setKind(e.target.value)}
-            className="flex-1 rounded border border-black/10 bg-white p-1 text-xs dark:border-white/15 dark:bg-neutral-800"
-          >
-            <option value="">All types</option>
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABEL[k]}
-              </option>
-            ))}
-          </select>
-          <select
-            value={relation}
-            onChange={(e) => setRelation(e.target.value)}
-            className="flex-1 rounded border border-black/10 bg-white p-1 text-xs dark:border-white/15 dark:bg-neutral-800"
-          >
-            <option value="">Any relation</option>
-            <option value="contradicts">Contradictions</option>
-            <option value="supports">Supports</option>
-            <option value="extends">Extends</option>
-            <option value="similar_to">Similar</option>
-          </select>
-        </div>
-      </div>
-      {atoms.length === 0 && <Empty>No approved atoms match.</Empty>}
-      {atoms.map((a) => (
-        <DiscoverCard key={a.id} atom={a} onOpen={() => openNote(a.source_path)} />
-      ))}
+      )}
+      {chip === "contradictions" ? (
+        <Tensions />
+      ) : chip === "decision" ? (
+        <Decisions />
+      ) : atoms.length === 0 ? (
+        <Empty>No atoms here yet. Use “Synthesize” above.</Empty>
+      ) : (
+        atoms.map((a) => <DiscoverCard key={a.id} atom={a} onOpen={() => openNote(a.source_path)} />)
+      )}
     </div>
   );
 }
