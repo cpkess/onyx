@@ -3,12 +3,15 @@ import { inlineNodeRules, inlineRegexRules } from "./inline";
 import { blockNodeRules } from "./blocks";
 import { mediaRegexRules } from "./media";
 import { hcmRegexRules } from "./hcm";
+import { linkedRefsRegexRules } from "./linkedrefs";
 
 export const nodeRules: NodeRule[] = [...blockNodeRules, ...inlineNodeRules];
 // Media (images/embeds/frontmatter) runs first so it claims `![[...]]` ranges
-// before the inline scans; HCM claims its `<!--ai-->` block next.
+// before the inline scans; HCM claims its `<!--ai-->` block next. Linked
+// references append a widget at the very end of the document.
 export const regexRules: RegexRule[] = [
   ...mediaRegexRules,
   ...hcmRegexRules,
   ...inlineRegexRules,
+  ...linkedRefsRegexRules,
 ];

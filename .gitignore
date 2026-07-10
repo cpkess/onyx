@@ -22,6 +22,9 @@ dist-ssr
 *.key
 *.key.pub
 
+# Claude Code local config / scratch
+.claude/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

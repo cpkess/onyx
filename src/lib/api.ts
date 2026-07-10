@@ -27,6 +27,28 @@ export interface SearchResult {
   snippet: string;
 }
 
+/** A block that references a page/tag, for inline linked references. */
+export interface BlockRef {
+  source_path: string;
+  source_title: string;
+  line_start: number;
+  line_end: number;
+  indent: number;
+  kind: "bullet" | "task" | "para" | "heading";
+  checked: boolean | null;
+  block_id: string | null;
+  text: string;
+}
+
+/** The resolved location of a `^block-id`. */
+export interface BlockLoc {
+  path: string;
+  title: string;
+  line_start: number;
+  line_end: number;
+  text: string;
+}
+
 export interface GraphNode {
   id: string;
   label: string;
@@ -240,6 +262,13 @@ export const api = {
     invoke<void>("write_vault_meta", { name, content }),
   deleteNote: (path: string) => invoke<void>("delete_note", { path }),
   getBacklinks: (name: string) => invoke<Backlink[]>("get_backlinks", { name }),
+  getBlockBacklinks: (name: string) =>
+    invoke<BlockRef[]>("get_block_backlinks", { name }),
+  resolveBlockRef: (blockId: string) =>
+    invoke<BlockLoc | null>("resolve_block_ref", { blockId }),
+  ensureBlockId: (path: string, line: number) =>
+    invoke<string>("ensure_block_id", { path, line }),
+  atomsForPage: (page: string) => invoke<Atom[]>("atoms_for_page", { page }),
   searchNotes: (query: string) =>
     invoke<SearchResult[]>("search_notes", { query }),
   getNoteNames: () => invoke<string[]>("get_note_names"),

@@ -1,7 +1,8 @@
 import { Decoration } from "@codemirror/view";
 import type { NodeRule, RegexRule } from "./core";
-import { FootnoteRefWidget, InlineDqlWidget, MathWidget } from "./widgets";
+import { BlockRefWidget, FootnoteRefWidget, InlineDqlWidget, MathWidget } from "./widgets";
 import { pagesVersion } from "../../dataview/pages";
+import { blockRefsVersion } from "../../dataview/blockrefs";
 
 // Inline DQL: `= expr` in an inline-code span → evaluated value.
 const inlineDqlRule: NodeRule = (node, ctx) => {
@@ -179,8 +180,28 @@ const blockIds: RegexRule = (text, offset, ctx) => {
   }
 };
 
+// Inline `((block-ref))` — transclude the referenced block's text.
+const BLOCKREF_RE = /\(\(([A-Za-z0-9_-]+)\)\)/g;
+
+const blockRefs: RegexRule = (text, offset, ctx) => {
+  BLOCKREF_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = BLOCKREF_RE.exec(text))) {
+    const start = offset + m.index;
+    const end = start + m[0].length;
+    if (ctx.lineActive(start)) continue; // show source while editing
+    ctx.replace(start, end, new BlockRefWidget(m[1], blockRefsVersion()));
+  }
+};
+
 export const inlineNodeRules: NodeRule[] = [inlineDqlRule, markerHider];
-export const inlineRegexRules: RegexRule[] = [inlineTokens, footnotes, math, blockIds];
+export const inlineRegexRules: RegexRule[] = [
+  inlineTokens,
+  footnotes,
+  math,
+  blockIds,
+  blockRefs,
+];
 
 
 

@@ -3,11 +3,18 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { renderMarkdown, renderInline } from "./markdown";
 import { getHost } from "./host";
 import { loadKatex, loadMermaid, mathCache, mermaidCache, enhanceRendered } from "./enhance";
-import { api } from "../../lib/api";
+import { api, noteName, type BlockRef } from "../../lib/api";
 import { runDql, runInline, toText, type DvResult } from "../../dataview/engine";
 import { DvLink } from "../../dataview/value";
 import { getCachedPages, invalidatePages } from "../../dataview/pages";
+import {
+  getCachedBlockRefs,
+  invalidateBlockRefs,
+  getCachedBlockLoc,
+  ensureBlockLoc,
+} from "../../dataview/blockrefs";
 import { parseTable, serializeTable, nextAlign, type TableGrid } from "./table";
+import { primitives, parsePrimitive } from "../../primitives/registry";
 
 /** Extract a heading section or `^block` from note content for embeds. */
 function extractSection(content: string, anchor: string): string {
@@ -639,6 +646,202 @@ export class DataviewWidget extends WidgetType {
         api.toggleTask(path, line).then(() => invalidatePages()).catch(() => {});
       }
     });
+    return el;
+  }
+}
+
+// ---- Linked references (Logseq-style self-building pages) ----
+
+/** Collapse state per page, persisted across widget recreation. */
+const lrCollapsed = new Map<string, boolean>();
+
+function renderRefGroup(path: string, refs: BlockRef[]): string {
+  const title = noteName(path);
+  const items = refs
+    .map((r) => {
+      const indent = Math.min(r.indent, 6) * 1.2;
+      const anchor = r.block_id ? ` data-anchor="^${escAttr(r.block_id)}"` : "";
+      if (r.kind === "task") {
+        return (
+          `<li class="onyx-lr-item" style="margin-left:${indent}em">` +
+          `<label><input type="checkbox" ${r.checked ? "checked" : ""} ` +
+          `data-task-path="${escAttr(path)}" data-task-line="${r.line_start}"> ` +
+          `${renderInline(r.text)}</label></li>`
+        );
+      }
+      return (
+        `<li class="onyx-lr-item" style="margin-left:${indent}em" ` +
+        `data-wikilink="${escAttr(title)}"${anchor}>` +
+        `<span class="onyx-bullet">•</span> ${renderInline(r.text)}</li>`
+      );
+    })
+    .join("");
+  return (
+    `<div class="onyx-lr-group"><a class="onyx-lr-source tok-wikilink" ` +
+    `data-wikilink="${escAttr(title)}">${escHtml(title)}</a>` +
+    `<ul class="onyx-lr-items">${items}</ul></div>`
+  );
+}
+
+/**
+ * A collapsible "Linked References" section appended at the bottom of a page,
+ * listing every block across the vault that references this page, grouped by
+ * source note. Task blocks toggle their SOURCE line. Renders synchronously from
+ * the blockrefs cache (populated when the note opens); empty until loaded.
+ */
+export class LinkedRefsWidget extends WidgetType {
+  constructor(readonly pageName: string, readonly version: number) {
+    super();
+  }
+  eq(o: LinkedRefsWidget) {
+    return o.pageName === this.pageName && o.version === this.version;
+  }
+  toDOM() {
+    const refs = getCachedBlockRefs(this.pageName) ?? [];
+    const el = document.createElement("div");
+    el.className = "onyx-linkedrefs onyx-rendered";
+    if (refs.length === 0) return el; // nothing to show yet
+
+    const key = this.pageName.toLowerCase();
+    const collapsed = lrCollapsed.get(key) ?? false;
+
+    // Group consecutive refs by source path (they arrive path-ordered).
+    const groups: { path: string; refs: BlockRef[] }[] = [];
+    for (const r of refs) {
+      const last = groups[groups.length - 1];
+      if (last && last.path === r.source_path) last.refs.push(r);
+      else groups.push({ path: r.source_path, refs: [r] });
+    }
+
+    const header = document.createElement("div");
+    header.className = "onyx-lr-header";
+    header.innerHTML =
+      `<span class="onyx-lr-caret">${collapsed ? "▸" : "▾"}</span>` +
+      `<span class="onyx-lr-title">Linked References</span>` +
+      `<span class="onyx-lr-count">${refs.length}</span>`;
+    header.onmousedown = (e) => {
+      e.preventDefault();
+      // Read the current state each click (don't reuse the render-time capture).
+      const nowCollapsed = !(lrCollapsed.get(key) ?? false);
+      lrCollapsed.set(key, nowCollapsed);
+      const body = el.querySelector(".onyx-lr-body") as HTMLElement | null;
+      const caret = el.querySelector(".onyx-lr-caret") as HTMLElement | null;
+      if (body) body.style.display = nowCollapsed ? "none" : "";
+      if (caret) caret.textContent = nowCollapsed ? "▸" : "▾";
+    };
+    el.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "onyx-lr-body";
+    if (collapsed) body.style.display = "none";
+    body.innerHTML = groups.map((g) => renderRefGroup(g.path, g.refs)).join("");
+    el.appendChild(body);
+
+    // Toggle a referenced task from its source file.
+    el.addEventListener("mousedown", (e) => {
+      const input = (e.target as HTMLElement)?.closest?.(
+        "input[data-task-path]"
+      ) as HTMLInputElement | null;
+      if (input) {
+        e.preventDefault();
+        const path = input.getAttribute("data-task-path")!;
+        const line = Number(input.getAttribute("data-task-line"));
+        api
+          .toggleTask(path, line)
+          .then(() => {
+            invalidatePages();
+            invalidateBlockRefs();
+          })
+          .catch(() => {});
+      }
+    });
+    return el;
+  }
+}
+
+// ---- Primitives (smart page bodies) ----
+
+/**
+ * Renders an `onyx-primitive` fence: a typed widget that organizes the page's
+ * linked references (e.g. a To-do checklist). Reads synchronously from the
+ * block-refs cache; task toggles write back to the SOURCE block's file.
+ */
+export class PrimitiveWidget extends WidgetType {
+  constructor(
+    readonly source: string,
+    readonly version: number,
+    readonly currentPath: string | null
+  ) {
+    super();
+  }
+  eq(o: PrimitiveWidget) {
+    return (
+      o.source === this.source &&
+      o.version === this.version &&
+      o.currentPath === this.currentPath
+    );
+  }
+  toDOM() {
+    const el = document.createElement("div");
+    el.className = "onyx-primitive onyx-rendered";
+    const { type, params } = parsePrimitive(this.source);
+    const prim = primitives[type];
+    const pageName = this.currentPath ? noteName(this.currentPath) : "";
+    if (!prim) {
+      el.innerHTML = `<div class="onyx-dv-error">Unknown primitive: ${type || "(none)"}</div>`;
+      return el;
+    }
+    el.innerHTML =
+      `<div class="onyx-prim-title">${prim.title}</div>` +
+      prim.render(params, { pageName, currentPath: this.currentPath });
+    el.addEventListener("mousedown", (e) => {
+      const input = (e.target as HTMLElement)?.closest?.(
+        "input[data-task-path]"
+      ) as HTMLInputElement | null;
+      if (input) {
+        e.preventDefault();
+        const path = input.getAttribute("data-task-path")!;
+        const line = Number(input.getAttribute("data-task-line"));
+        api
+          .toggleTask(path, line)
+          .then(() => {
+            invalidatePages();
+            invalidateBlockRefs();
+          })
+          .catch(() => {});
+      }
+    });
+    return el;
+  }
+}
+
+/** Inline `((block-ref))` — renders the referenced block's text (transclusion). */
+export class BlockRefWidget extends WidgetType {
+  constructor(readonly id: string, readonly version: number) {
+    super();
+  }
+  eq(o: BlockRefWidget) {
+    return o.id === this.id && o.version === this.version;
+  }
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = "onyx-blockref";
+    const loc = getCachedBlockLoc(this.id);
+    if (loc === undefined) {
+      ensureBlockLoc(this.id);
+      el.textContent = "(( … ))";
+      el.classList.add("onyx-blockref-loading");
+      return el;
+    }
+    if (loc === null) {
+      el.textContent = `((${this.id}))`;
+      el.classList.add("onyx-blockref-broken");
+      return el;
+    }
+    el.innerHTML = renderInline(loc.text);
+    el.setAttribute("data-wikilink", noteName(loc.path));
+    el.setAttribute("data-anchor", "^" + this.id);
+    el.title = `From ${noteName(loc.path)}`;
     return el;
   }
 }

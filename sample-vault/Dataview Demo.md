@@ -1,3 +1,8 @@
+---
+status: "In progress"
+priority: "Medium"
+due:  no
+---
 # Dataview Demo
 
 ## Active projects
@@ -23,7 +28,8 @@ TABLE rating FROM #project GROUP BY status
 Inline: Alpha rating is `= 8` and today is `= dateformat(now(), "yyyy-MM-dd")`.
 
 ## Editable table
-| Name  | Status | Notes        |
-|-------|--------|--------------|
-| Alpha | active | needs schema |
-| Beta  | done   | shipped      |
+| Name | Status | Notes   |
+| ---- | ------ | ------- |
+| Beta | done   | shipped |
+|      |        |         |
+|      |        |         |

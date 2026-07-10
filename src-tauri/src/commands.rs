@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::ai::{self, AiConfig, ChatMessage};
-use crate::index::{self, Backlink, GraphData, SearchResult};
+use crate::index::{self, Backlink, BlockLoc, BlockRef, GraphData, SearchResult};
 use crate::vault::{self, AppState, TreeNode, VaultInfo};
 use crate::vector::{self, SemanticHit};
 
@@ -477,6 +477,62 @@ pub fn get_backlinks(state: State<AppState>, name: String) -> Result<Vec<Backlin
             }
         }
         Ok(links)
+    })
+}
+
+/// Every block across the vault that references `name` (a page stem or tag),
+/// ordered for grouping by source note. Powers inline "Linked References".
+#[tauri::command]
+pub fn get_block_backlinks(state: State<AppState>, name: String) -> Result<Vec<BlockRef>, String> {
+    with_vault(&state, |ctx| {
+        index::block_backlinks(&ctx.conn, &name).map_err(|e| e.to_string())
+    })
+}
+
+/// Resolve a `((block-ref))` / `![[note#^id]]` anchor to its note + line range.
+#[tauri::command]
+pub fn resolve_block_ref(
+    state: State<AppState>,
+    block_id: String,
+) -> Result<Option<BlockLoc>, String> {
+    with_vault(&state, |ctx| {
+        index::resolve_block(&ctx.conn, &block_id).map_err(|e| e.to_string())
+    })
+}
+
+/// Ensure the block at `line` (0-based) carries a trailing `^id`, minting one
+/// lazily if absent (Logseq-style). Returns the block id. Writes + reindexes.
+#[tauri::command]
+pub fn ensure_block_id(state: State<AppState>, path: String, line: usize) -> Result<String, String> {
+    with_vault(&state, |ctx| {
+        let abs = vault::resolve(&ctx.root, &path)?;
+        let content = std::fs::read_to_string(&abs).map_err(|e| e.to_string())?;
+        let mut lines: Vec<String> = content.split('\n').map(String::from).collect();
+        if line >= lines.len() {
+            return Err("Block line out of range".into());
+        }
+        // Already has a trailing ^id? Return it unchanged.
+        let existing = lines[line]
+            .rsplit_once('^')
+            .map(|(_, id)| id.trim())
+            .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        if let Some(id) = existing {
+            return Ok(id.to_string());
+        }
+        // Mint a short, collision-resistant id from the current time.
+        let id = format!(
+            "{:x}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let trimmed = lines[line].trim_end();
+        lines[line] = format!("{trimmed} ^{id}");
+        let new_content = lines.join("\n");
+        std::fs::write(&abs, &new_content).map_err(|e| e.to_string())?;
+        index::index_note(&ctx.conn, &path, &new_content, now_secs()).map_err(|e| e.to_string())?;
+        Ok(id)
     })
 }
 
@@ -1102,9 +1158,16 @@ async fn subject_doc(
         "---\nonyx_generated: subject\nonyx_subject: {}\n---\n\n",
         yaml_quote(subject),
     );
+    // Self-building sections: primitives that keep aggregating everything which
+    // links to this page (tasks, decisions, mentions) after generation.
+    let primitives = "\n\n## Live sections\n\
+        These keep themselves up to date from every note that links to this page.\n\n\
+        ### Open work\n```onyx-primitive\ntype: todo\n```\n\n\
+        ### Decisions\n```onyx-primitive\ntype: decisions\n```\n\n\
+        ### Mentions\n```onyx-primitive\ntype: mentions\n```\n";
     Ok(AiDocument {
         title: subject.to_string(),
-        content: fm + &content,
+        content: fm + &content + primitives,
     })
 }
 

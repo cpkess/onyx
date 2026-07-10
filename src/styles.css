@@ -274,6 +274,168 @@ body {
 /* List bullets */
 .onyx-bullet {
   color: var(--onyx-accent);
+  cursor: pointer; /* click to zoom into the bullet's subtree */
+}
+
+/* Outliner: generous per-level indent + a guide rail at each nesting boundary */
+.onyx-outline-line {
+  position: relative;
+}
+.onyx-outline-line::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc((var(--onyx-depth, 1) - 1) * 1.5em + 0.55em);
+  border-left: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+  pointer-events: none;
+}
+
+/* Outliner: collapse chevron shown left of bullets that have children */
+.onyx-fold-chevron {
+  display: inline-block;
+  width: 1em;
+  margin-left: -1em;
+  color: color-mix(in srgb, currentColor 45%, transparent);
+  cursor: pointer;
+  font-size: 0.7em;
+  user-select: none;
+  transition: color 0.1s;
+}
+.onyx-fold-chevron:hover {
+  color: var(--onyx-accent);
+}
+
+/* Outliner: zoom breadcrumb shown above a hoisted subtree */
+.onyx-zoom-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15em;
+  margin: 0 0 0.6em;
+  padding-bottom: 0.4em;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 0.85em;
+  color: var(--onyx-muted, #888);
+}
+.onyx-zoom-crumb {
+  background: none;
+  border: none;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  cursor: pointer;
+  color: inherit;
+  max-width: 22em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.onyx-zoom-crumb:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: var(--onyx-accent);
+}
+.onyx-zoom-home {
+  font-size: 1.05em;
+}
+.onyx-zoom-sep {
+  opacity: 0.5;
+}
+
+/* Primitives (smart page bodies) */
+.onyx-primitive {
+  margin: 0.8em 0;
+  padding: 0.6em 0.9em;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--onyx-accent) 4%, transparent);
+}
+.onyx-prim-title {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--onyx-accent);
+  font-weight: 600;
+  margin-bottom: 0.4em;
+}
+.onyx-prim-list,
+.onyx-prim-tasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.onyx-prim-list li,
+.onyx-prim-tasks li {
+  padding: 0.12em 0;
+}
+.onyx-prim-src {
+  margin-left: 0.5em;
+  font-size: 0.8em;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.onyx-prim-src:hover {
+  color: var(--onyx-accent);
+  opacity: 1;
+}
+
+/* Inline block references (( )) */
+.onyx-blockref {
+  border-bottom: 1px solid color-mix(in srgb, var(--onyx-accent) 45%, transparent);
+  cursor: pointer;
+}
+.onyx-blockref-loading {
+  opacity: 0.5;
+}
+.onyx-blockref-broken {
+  color: #c0392b;
+  border-bottom: 1px dashed #c0392b;
+}
+
+/* Linked references (self-building pages) */
+.onyx-linkedrefs {
+  margin-top: 2.5em;
+  padding-top: 0.5em;
+  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+}
+.onyx-lr-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  cursor: pointer;
+  user-select: none;
+  color: var(--onyx-muted, #888);
+  font-size: 0.8em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.3em 0;
+}
+.onyx-lr-caret {
+  width: 1em;
+}
+.onyx-lr-count {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 10px;
+  padding: 0 0.5em;
+  font-size: 0.9em;
+}
+.onyx-lr-group {
+  margin: 0.7em 0;
+}
+.onyx-lr-source {
+  font-weight: 600;
+  cursor: pointer;
+}
+.onyx-lr-items {
+  list-style: none;
+  margin: 0.25em 0 0;
+  padding: 0;
+}
+.onyx-lr-item {
+  padding: 0.1em 0;
+  cursor: pointer;
+}
+.onyx-lr-item .onyx-bullet {
+  margin-right: 0.35em;
 }
 
 /* Task checkboxes */

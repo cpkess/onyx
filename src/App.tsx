@@ -15,6 +15,7 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { ImportDropZone } from "./components/ImportDropZone";
 import { runHotkey } from "./commands/registry";
 import { invalidatePages } from "./dataview/pages";
+import { invalidateBlockRefs } from "./dataview/blockrefs";
 
 function Toolbar() {
   const vault = useStore((s) => s.vault);
@@ -106,6 +107,7 @@ export default function App() {
       }
       refreshTree();
       invalidatePages();
+      invalidateBlockRefs();
     });
     return () => {
       unlisten.then((fn) => fn());

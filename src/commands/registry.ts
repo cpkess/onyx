@@ -10,6 +10,9 @@ import { regenerateActivePage } from "../lib/regenerate";
 import { composeActivePage } from "../lib/compose";
 import { manualUpdateCheck } from "../lib/updater";
 import { pickAndImport } from "../lib/importDoc";
+import { api } from "../lib/api";
+import { invalidatePages } from "../dataview/pages";
+import { invalidateBlockRefs } from "../dataview/blockrefs";
 
 export interface Command {
   id: string;
@@ -28,6 +31,19 @@ export const commands: Command[] = [
   { id: "new-note", name: "Create new note", keys: "mod+n", run: () => void s().newNote() },
   { id: "daily-note", name: "Open today's daily note", keys: "mod+d", run: () => void s().openDailyNote() },
   { id: "insert-template", name: "Insert template…", run: () => s().setTemplatePickerOpen(true) },
+  {
+    id: "reindex-vault",
+    name: "Reindex vault (rebuild links, blocks & references)",
+    run: () => {
+      void api
+        .reindex()
+        .then(() => {
+          invalidatePages();
+          invalidateBlockRefs();
+        })
+        .catch((e) => console.error("reindex failed", e));
+    },
+  },
   {
     id: "toggle-bookmark",
     name: "Bookmark / unbookmark current note",

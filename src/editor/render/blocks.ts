@@ -8,9 +8,11 @@ import {
   DataviewWidget,
   HrWidget,
   MermaidWidget,
+  PrimitiveWidget,
   TableWidget,
 } from "./widgets";
 import { pagesVersion } from "../../dataview/pages";
+import { blockRefsVersion } from "../../dataview/blockrefs";
 
 const CALLOUT_RE = /^>\s*\[!(\w+)\][+-]?\s*(.*)$/;
 
@@ -137,6 +139,25 @@ const dataviewRule: NodeRule = (node, ctx) => {
   );
 };
 
+const primitiveRule: NodeRule = (node, ctx) => {
+  if (node.name !== "FencedCode") return;
+  const startLine = ctx.state.doc.lineAt(node.from);
+  const endLine = lastContentLine(ctx, node.to);
+  const fence = startLine.text.match(/^\s*(?:`{3,}|~{3,})\s*([\w+-]*)/);
+  if (!fence || fence[1] !== "onyx-primitive") return;
+  if (ctx.rangeActive(node.from, endLine.to)) return; // editing: show source
+  const code: string[] = [];
+  for (let l = startLine.number + 1; l < endLine.number; l++) {
+    code.push(ctx.state.doc.line(l).text);
+  }
+  ctx.replace(
+    startLine.from,
+    endLine.to,
+    new PrimitiveWidget(code.join("\n"), blockRefsVersion(), ctx.cb.currentPath ?? null),
+    true
+  );
+};
+
 export const blockNodeRules: NodeRule[] = [
   blockquoteRule,
   quoteMarkRule,
@@ -147,4 +168,5 @@ export const blockNodeRules: NodeRule[] = [
   fencedCodeRule,
   mermaidRule,
   dataviewRule,
+  primitiveRule,
 ];

@@ -26,12 +26,60 @@ static INLINE_FIELD_BRACKET_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[\[(]([A-Za-z][\w \-/]*?)::[ \t]*([^\])]*)[\])]").unwrap());
 static TASK_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[ \t]*[-*+] \[([ xX])\]\s+(.*)$").unwrap());
+// A list item: leading whitespace, a `-`/`*`/`+` marker, then content.
+static LIST_MARKER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^([ \t]*)[-*+][ \t]+(.*)$").unwrap());
+// A trailing `^block-id` at the very end of a line (mirrors the editor's
+// BLOCK_ID_RE in src/editor/render/inline.ts).
+static BLOCK_ID_TRAIL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[ \t]+\^([A-Za-z0-9_-]+)[ \t]*$").unwrap());
+// A `((block-ref))` inline reference.
+static BLOCKREF_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\(\(([A-Za-z0-9_-]+)\)\)").unwrap());
 
 #[derive(Debug, Serialize)]
 pub struct Backlink {
     pub path: String,
     pub title: String,
     pub snippet: String,
+}
+
+/// A parsed block, before it is assigned a database id.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block {
+    pub block_id: Option<String>,
+    /// Index into the parsed `Vec<Block>` of the enclosing list item, if any.
+    pub parent_idx: Option<usize>,
+    pub line_start: i64,
+    pub line_end: i64,
+    pub indent: i64,
+    pub kind: String,
+    pub checked: Option<bool>,
+    pub text: String,
+}
+
+/// A block that references a page/tag, returned grouped by source note.
+#[derive(Debug, Serialize)]
+pub struct BlockRef {
+    pub source_path: String,
+    pub source_title: String,
+    pub line_start: i64,
+    pub line_end: i64,
+    pub indent: i64,
+    pub kind: String,
+    pub checked: Option<bool>,
+    pub block_id: Option<String>,
+    pub text: String,
+}
+
+/// The resolved location of a `^block-id`.
+#[derive(Debug, Serialize)]
+pub struct BlockLoc {
+    pub path: String,
+    pub title: String,
+    pub line_start: i64,
+    pub line_end: i64,
+    pub text: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +163,37 @@ pub fn init_db(db_path: &Path) -> rusqlite::Result<Connection> {
             FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks(note_id);
+
+        -- Block-level index: every list item / paragraph / heading is an
+        -- addressable block. Powers linked references, ((block refs)) and
+        -- ![[note#^id]] resolution. Additive to the note-level tables above.
+        CREATE TABLE IF NOT EXISTS blocks (
+            id         INTEGER PRIMARY KEY,
+            note_id    INTEGER NOT NULL,
+            block_id   TEXT,               -- trailing ^id if present, else NULL
+            parent_id  INTEGER,            -- blocks.id of the enclosing list item
+            line_start INTEGER NOT NULL,   -- 0-based line
+            line_end   INTEGER NOT NULL,   -- inclusive, 0-based
+            indent     INTEGER NOT NULL,   -- normalized nesting depth
+            kind       TEXT NOT NULL,      -- 'bullet' | 'task' | 'para' | 'heading'
+            checked    INTEGER,            -- 0/1 for kind='task', else NULL
+            text       TEXT NOT NULL,
+            FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_blocks_note ON blocks(note_id);
+        CREATE INDEX IF NOT EXISTS idx_blocks_blockid
+            ON blocks(block_id) WHERE block_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS block_links (
+            source_block INTEGER NOT NULL,
+            note_id      INTEGER NOT NULL,  -- denormalized: source block's note
+            target       TEXT NOT NULL,     -- page stem, tag, or ^/block id
+            anchor       TEXT,              -- #heading or ^block portion, if any
+            link_type    TEXT NOT NULL,     -- 'page' | 'tag' | 'blockref' | 'embed'
+            FOREIGN KEY(source_block) REFERENCES blocks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_block_links_target
+            ON block_links(target COLLATE NOCASE);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
             USING fts5(path UNINDEXED, title, body);
@@ -314,6 +393,139 @@ pub fn extract_tags(content: &str) -> Vec<String> {
     out
 }
 
+/// Parse a note into addressable blocks (list items, paragraphs, headings).
+/// Blocks inside fenced code are skipped. `indent` is a normalized nesting
+/// depth derived from the leading whitespace of list items; `parent_idx` points
+/// at the enclosing list item. Line numbers are 0-based. This mirrors the
+/// client-side outliner block model so the index and editor agree.
+pub fn parse_blocks(content: &str) -> Vec<Block> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let n = lines.len();
+
+    // Mark fenced-code lines (``` or ~~~) so their contents aren't blocks.
+    let mut in_code = vec![false; n];
+    let mut fence: Option<char> = None;
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let is_fence = t.starts_with("```") || t.starts_with("~~~");
+        match fence {
+            Some(c) => {
+                in_code[i] = true;
+                if is_fence && t.starts_with(c) {
+                    fence = None;
+                }
+            }
+            None => {
+                if is_fence {
+                    fence = Some(if t.starts_with("```") { '`' } else { '~' });
+                    in_code[i] = true;
+                }
+            }
+        }
+    }
+
+    let mut blocks: Vec<Block> = Vec::new();
+    // Stack of (leading-whitespace width, block index) for list-item nesting.
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+
+    for i in 0..n {
+        if in_code[i] {
+            continue;
+        }
+        let raw = lines[i];
+        if raw.trim().is_empty() {
+            continue;
+        }
+
+        let (kind, ws_width, mut text, checked): (&str, usize, String, Option<bool>) =
+            if let Some(c) = TASK_RE.captures(raw) {
+                let ws = raw.len() - raw.trim_start().len();
+                let done = matches!(&c[1], "x" | "X");
+                ("task", ws, c[2].to_string(), Some(done))
+            } else if let Some(c) = LIST_MARKER_RE.captures(raw) {
+                (
+                    "bullet",
+                    c.get(1).map(|m| m.as_str().len()).unwrap_or(0),
+                    c[2].to_string(),
+                    None,
+                )
+            } else if HEADING_RE.is_match(raw) {
+                ("heading", 0, raw.trim().to_string(), None)
+            } else {
+                ("para", 0, raw.trim().to_string(), None)
+            };
+
+        // Peel a trailing `^block-id` off the block text.
+        let block_id = BLOCK_ID_TRAIL_RE.captures(&text).map(|c| c[1].to_string());
+        if block_id.is_some() {
+            text = BLOCK_ID_TRAIL_RE.replace(&text, "").to_string();
+        }
+
+        let is_list = kind == "bullet" || kind == "task";
+        let (indent, parent_idx) = if is_list {
+            while let Some(&(w, _)) = stack.last() {
+                if w >= ws_width {
+                    stack.pop();
+                } else {
+                    break;
+                }
+            }
+            (stack.len() as i64, stack.last().map(|&(_, idx)| idx))
+        } else {
+            // Headings and paragraphs break list nesting.
+            stack.clear();
+            (0, None)
+        };
+
+        let idx = blocks.len();
+        blocks.push(Block {
+            block_id,
+            parent_idx,
+            line_start: i as i64,
+            line_end: i as i64,
+            indent,
+            kind: kind.to_string(),
+            checked,
+            text: text.trim().to_string(),
+        });
+        if is_list {
+            stack.push((ws_width, idx));
+        }
+    }
+    blocks
+}
+
+/// Extract the references inside a single block's text as
+/// `(target, anchor, link_type)` tuples. Unlike `extract_wikilinks`, this
+/// preserves the `#heading` / `^block` anchor.
+fn extract_block_links(text: &str) -> Vec<(String, Option<String>, String)> {
+    let mut out = Vec::new();
+    for c in WIKILINK_EMBED_RE.captures_iter(text) {
+        let is_embed = &c[1] == "!";
+        let body = &c[2];
+        let target_part = body.split('|').next().unwrap_or(body);
+        let (name, anchor) = match target_part.find('#') {
+            Some(i) => (
+                target_part[..i].trim(),
+                Some(target_part[i + 1..].trim().to_string()),
+            ),
+            None => (target_part.trim(), None),
+        };
+        if name.is_empty() {
+            continue; // e.g. a self-embed ![[#^id]] — skip for now
+        }
+        let link_type = if is_embed { "embed" } else { "page" };
+        out.push((name.to_string(), anchor, link_type.to_string()));
+    }
+    for c in TAG_RE.captures_iter(text) {
+        out.push((c[1].to_string(), None, "tag".to_string()));
+    }
+    for c in BLOCKREF_RE.captures_iter(text) {
+        out.push((c[1].to_string(), None, "blockref".to_string()));
+    }
+    out
+}
+
 fn first_nonempty_line(content: &str) -> String {
     content
         .lines()
@@ -345,6 +557,8 @@ pub fn index_note(conn: &Connection, rel_path: &str, content: &str, mtime: i64) 
     conn.execute("DELETE FROM aliases WHERE note_id = ?1", params![note_id])?;
     conn.execute("DELETE FROM fields WHERE note_id = ?1", params![note_id])?;
     conn.execute("DELETE FROM tasks WHERE note_id = ?1", params![note_id])?;
+    // Deleting blocks cascades to block_links via the foreign key.
+    conn.execute("DELETE FROM blocks WHERE note_id = ?1", params![note_id])?;
     for target in extract_wikilinks(content) {
         conn.execute(
             "INSERT INTO links (source_id, target) VALUES (?1, ?2)",
@@ -380,6 +594,39 @@ pub fn index_note(conn: &Connection, rel_path: &str, content: &str, mtime: i64) 
             "INSERT INTO tasks (note_id, text, checked, line) VALUES (?1, ?2, ?3, ?4)",
             params![note_id, text, checked as i64, line],
         )?;
+    }
+
+    // Block-level index: insert parsed blocks (parents precede children, so
+    // their db ids are already known) plus each block's preserved-anchor links.
+    let parsed = parse_blocks(content);
+    let mut block_ids: Vec<i64> = Vec::with_capacity(parsed.len());
+    for b in &parsed {
+        let parent_db = b.parent_idx.map(|pi| block_ids[pi]);
+        conn.execute(
+            "INSERT INTO blocks
+                 (note_id, block_id, parent_id, line_start, line_end, indent, kind, checked, text)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                note_id,
+                b.block_id,
+                parent_db,
+                b.line_start,
+                b.line_end,
+                b.indent,
+                b.kind,
+                b.checked.map(|c| c as i64),
+                b.text,
+            ],
+        )?;
+        let bid = conn.last_insert_rowid();
+        block_ids.push(bid);
+        for (target, anchor, link_type) in extract_block_links(&b.text) {
+            conn.execute(
+                "INSERT INTO block_links (source_block, note_id, target, anchor, link_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![bid, note_id, target, anchor, link_type],
+            )?;
+        }
     }
 
     conn.execute("DELETE FROM notes_fts WHERE path = ?1", params![rel_path])?;
@@ -598,7 +845,7 @@ pub fn remove_note(conn: &Connection, rel_path: &str) -> rusqlite::Result<()> {
 pub fn reindex_all(conn: &mut Connection, root: &Path) -> rusqlite::Result<usize> {
     let tx = conn.transaction()?;
     tx.execute_batch(
-        "DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM aliases; DELETE FROM fields; DELETE FROM tasks; DELETE FROM notes_fts;",
+        "DELETE FROM notes; DELETE FROM links; DELETE FROM tags; DELETE FROM aliases; DELETE FROM fields; DELETE FROM tasks; DELETE FROM block_links; DELETE FROM blocks; DELETE FROM notes_fts;",
     )?;
     let mut count = 0;
     for entry in WalkDir::new(root)
@@ -652,6 +899,55 @@ pub fn backlinks(conn: &Connection, name: &str) -> rusqlite::Result<Vec<Backlink
         out.push(Backlink { path, title, snippet });
     }
     Ok(out)
+}
+
+/// Every block that references `name` (a page stem or tag), ordered so callers
+/// can group by source note. This is the "linked references" data source.
+pub fn block_backlinks(conn: &Connection, name: &str) -> rusqlite::Result<Vec<BlockRef>> {
+    let key = name.trim().trim_start_matches('#');
+    let mut stmt = conn.prepare(
+        "SELECT n.path, n.title, b.line_start, b.line_end, b.indent, b.kind, b.checked, b.block_id, b.text
+         FROM block_links bl
+         JOIN blocks b ON b.id = bl.source_block
+         JOIN notes  n ON n.id = b.note_id
+         WHERE bl.target = ?1 COLLATE NOCASE
+           AND bl.link_type IN ('page', 'embed', 'tag')
+         ORDER BY n.path, b.line_start",
+    )?;
+    let rows = stmt.query_map(params![key], |r| {
+        Ok(BlockRef {
+            source_path: r.get(0)?,
+            source_title: r.get(1)?,
+            line_start: r.get(2)?,
+            line_end: r.get(3)?,
+            indent: r.get(4)?,
+            kind: r.get(5)?,
+            checked: r.get::<_, Option<i64>>(6)?.map(|c| c != 0),
+            block_id: r.get(7)?,
+            text: r.get(8)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Resolve a `^block-id` (with or without the leading `^`) to its note + range.
+pub fn resolve_block(conn: &Connection, block_id: &str) -> rusqlite::Result<Option<BlockLoc>> {
+    let id = block_id.trim().trim_start_matches('^');
+    let mut stmt = conn.prepare(
+        "SELECT n.path, n.title, b.line_start, b.line_end, b.text
+         FROM blocks b JOIN notes n ON n.id = b.note_id
+         WHERE b.block_id = ?1 LIMIT 1",
+    )?;
+    stmt.query_row(params![id], |r| {
+        Ok(BlockLoc {
+            path: r.get(0)?,
+            title: r.get(1)?,
+            line_start: r.get(2)?,
+            line_end: r.get(3)?,
+            text: r.get(4)?,
+        })
+    })
+    .optional()
 }
 
 /// Full-text search over note titles and bodies.
@@ -1015,6 +1311,120 @@ mod tests {
         let bl = backlinks(&conn, "B").unwrap();
         assert_eq!(bl.len(), 1);
         assert_eq!(bl[0].path, "a.md");
+    }
+
+    #[test]
+    fn parses_blocks_with_nesting_and_ids() {
+        let c = "# Title\n- parent [[Alpha]]\n  - child #tag\n  - [ ] task ^t1\n\nplain para\n";
+        let blocks = parse_blocks(c);
+        // heading, parent bullet, child bullet, task, para
+        assert_eq!(blocks.len(), 5);
+        assert_eq!(blocks[0].kind, "heading");
+        assert_eq!(blocks[1].kind, "bullet");
+        assert_eq!(blocks[1].indent, 0);
+        assert_eq!(blocks[1].text, "parent [[Alpha]]");
+        assert_eq!(blocks[2].indent, 1);
+        assert_eq!(blocks[2].parent_idx, Some(1));
+        assert_eq!(blocks[3].kind, "task");
+        assert_eq!(blocks[3].checked, Some(false));
+        assert_eq!(blocks[3].indent, 1);
+        assert_eq!(blocks[3].block_id.as_deref(), Some("t1"));
+        assert_eq!(blocks[3].text, "task"); // ^t1 peeled off
+        assert_eq!(blocks[4].kind, "para");
+        assert_eq!(blocks[4].parent_idx, None);
+    }
+
+    #[test]
+    fn block_links_preserve_anchors() {
+        let links = extract_block_links("see [[Note#^abc]] and ![[Other#Heading]] and ((xyz)) #tag");
+        assert!(links.contains(&("Note".into(), Some("^abc".into()), "page".into())));
+        assert!(links.contains(&("Other".into(), Some("Heading".into()), "embed".into())));
+        assert!(links.contains(&("xyz".into(), None, "blockref".into())));
+        assert!(links.contains(&("tag".into(), None, "tag".into())));
+    }
+
+    #[test]
+    fn block_backlinks_and_resolve_roundtrip() {
+        let conn = init_db(Path::new(":memory:")).unwrap();
+        index_note(&conn, "daily/2026-07-10.md", "- met [[Project X]] re scope\n- unrelated", 0).unwrap();
+        index_note(&conn, "notes/anchor.md", "- a decision ^dec1", 0).unwrap();
+        let refs = block_backlinks(&conn, "Project X").unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].source_path, "daily/2026-07-10.md");
+        assert_eq!(refs[0].text, "met [[Project X]] re scope");
+        assert_eq!(refs[0].line_start, 0);
+        let loc = resolve_block(&conn, "^dec1").unwrap().unwrap();
+        assert_eq!(loc.path, "notes/anchor.md");
+        assert_eq!(loc.text, "a decision");
+    }
+
+    #[test]
+    fn blocks_skip_fenced_code() {
+        let c = "- real\n```\n- not a block\n[[NotLinked]]\n```\n- also real";
+        let blocks = parse_blocks(c);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text, "real");
+        assert_eq!(blocks[1].text, "also real");
+    }
+
+    #[test]
+    fn demo_vault_nimbus_primitives() {
+        // Verifies the sample-vault Project Nimbus demo produces the expected
+        // linked references for the todo/notes/mentions primitives.
+        let conn = init_db(Path::new(":memory:")).unwrap();
+        let files = [
+            "../sample-vault/Daily/2026-07-06.md",
+            "../sample-vault/Daily/2026-07-07.md",
+            "../sample-vault/Daily/2026-07-08.md",
+            "../sample-vault/Daily/2026-07-10.md",
+            "../sample-vault/Nimbus Field Notes.md",
+            "../sample-vault/Project Nimbus.md",
+        ];
+        for f in files {
+            let content = std::fs::read_to_string(f).unwrap_or_default();
+            let rel = f.trim_start_matches("../sample-vault/");
+            index_note(&conn, rel, &content, 0).unwrap();
+        }
+        let refs = block_backlinks(&conn, "Project Nimbus").unwrap();
+        // Exclude the page's own note (the primitives do this client-side).
+        let external: Vec<&BlockRef> =
+            refs.iter().filter(|r| r.source_path != "Project Nimbus.md").collect();
+        let tasks = external.iter().filter(|r| r.kind == "task").count();
+        let open = external
+            .iter()
+            .filter(|r| r.kind == "task" && r.checked == Some(false))
+            .count();
+        let notes = external
+            .iter()
+            .filter(|r| r.kind == "bullet" || r.kind == "para")
+            .count();
+        assert_eq!(tasks, 12, "todo primitive should see 12 task blocks");
+        assert_eq!(open, 9, "9 of the tasks are open");
+        assert_eq!(notes, 14, "notes primitive should see 14 note blocks");
+        // Heuristic material for the atom-backed primitives (decisions / pains /
+        // insights surface these journal blocks even before Atoms synthesis).
+        let has = |re: &str| {
+            let low = re.to_lowercase();
+            external.iter().any(|r| r.text.to_lowercase().starts_with(&low))
+        };
+        assert!(has("decision"), "a Decision: block should exist");
+        assert!(has("problem") || has("blocker"), "a Problem/Blocker block should exist");
+        assert!(has("insight"), "an Insight: block should exist");
+        // The 2026-07-10 journal alone feeds all three primitives.
+        let from_710 = external
+            .iter()
+            .filter(|r| r.source_path == "Daily/2026-07-10.md")
+            .count();
+        let tasks_710 = external
+            .iter()
+            .filter(|r| r.source_path == "Daily/2026-07-10.md" && r.kind == "task")
+            .count();
+        assert!(from_710 >= 6, "the 2026-07-10 note should mention Nimbus many times");
+        assert!(tasks_710 >= 3, "and contribute several tasks");
+        // The ^nimbus-kickoff block resolves (for ((block-ref)) / embeds).
+        let loc = resolve_block(&conn, "nimbus-kickoff").unwrap().unwrap();
+        assert_eq!(loc.path, "Daily/2026-07-06.md");
+        assert!(loc.text.contains("Kicked off"));
     }
 
     #[test]

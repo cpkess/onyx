@@ -442,6 +442,38 @@ pub fn get_atoms(app: AppHandle, filter: AtomFilter) -> Vec<Atom> {
     .unwrap_or_default()
 }
 
+/// Approved atoms drawn from every note that references `page` — the data
+/// source for atom-backed primitives (Decisions / Pain points / Insights).
+/// Atoms are anchored to a source note (not a block), so this is note-granular.
+#[tauri::command]
+pub fn atoms_for_page(app: AppHandle, page: String) -> Vec<Atom> {
+    // The set of notes whose blocks reference this page (from the main index).
+    let sources: std::collections::HashSet<String> = {
+        let vault_state = app.state::<AppState>();
+        let guard = vault_state.vault.lock().unwrap();
+        match guard.as_ref() {
+            Some(ctx) => index::block_backlinks(&ctx.conn, &page)
+                .map(|refs| refs.into_iter().map(|r| r.source_path).collect())
+                .unwrap_or_default(),
+            None => return Vec::new(),
+        }
+    };
+    if sources.is_empty() {
+        return Vec::new();
+    }
+    with_atoms(&app, |c| {
+        let mut stmt =
+            c.prepare(&format!("SELECT {ATOM_COLS} FROM atoms WHERE status='approved' ORDER BY kind, id DESC"))?;
+        let rows = stmt
+            .query_map([], atom_from_row)?
+            .filter_map(|r| r.ok())
+            .filter(|a: &Atom| sources.contains(&a.source_path))
+            .collect::<Vec<_>>();
+        Ok(rows)
+    })
+    .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn approve_atom(app: AppHandle, id: i64) -> Result<(), String> {
     with_atoms(&app, |c| {

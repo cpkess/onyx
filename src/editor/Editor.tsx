@@ -26,6 +26,8 @@ import { trackEvent } from "../features/night/track";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
 import { editorModeFacet, type EditorMode } from "./render/core";
 import { ensurePages, onPagesChanged } from "../dataview/pages";
+import { ensureBlockRefs, ensureAtoms, onBlockRefsChanged } from "../dataview/blockrefs";
+import { outlinerExtensions, outlinerKeymap } from "./outliner";
 
 /** Fold a markdown heading down to (but not including) the next same/higher heading. */
 const headingFold = foldService.of((state, from) => {
@@ -107,6 +109,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
   const viewRef = useRef<EditorView | null>(null);
   const namesCompartment = useRef(new Compartment());
   const modeCompartment = useRef(new Compartment());
+  const outlinerCompartment = useRef(new Compartment());
   const namesRef = useRef<string[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
 
@@ -115,6 +118,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
   const setNoteMode = useStore((s) => s.setNoteMode);
   const tree = useStore((s) => s.tree);
   const mode = useStore((s) => s.noteModes[path] ?? s.settings.defaultMode);
+  const outliner = useStore((s) => s.settings.outliner);
 
   // Keep the autocomplete/link name list fresh as the vault changes.
   useEffect(() => {
@@ -148,6 +152,16 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
     }
   }, [mode]);
 
+  // Toggle the block outliner without reopening the note.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) {
+      view.dispatch({
+        effects: outlinerCompartment.current.reconfigure(outlinerExtensions(outliner)),
+      });
+    }
+  }, [outliner]);
+
   useEffect(() => {
     let disposed = false;
 
@@ -159,6 +173,12 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
 
     // Re-render dataview widgets when the page cache changes.
     const unsubPages = onPagesChanged(() => {
+      const v = viewRef.current;
+      if (v) v.dispatch({ selection: v.state.selection });
+    });
+
+    // Re-render the Linked References section when its cache changes.
+    const unsubRefs = onBlockRefsChanged(() => {
       const v = viewRef.current;
       if (v) v.dispatch({ selection: v.state.selection });
     });
@@ -202,9 +222,13 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
           codeFolding(),
           foldGutter(),
           headingFold,
+          outlinerCompartment.current.of(
+            outlinerExtensions(useStore.getState().settings.outliner)
+          ),
           search({ top: true }),
           keymap.of([
             ...closeBracketsKeymap,
+            ...outlinerKeymap,
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
@@ -283,6 +307,10 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
         }
       });
 
+      // Load this page's linked references + atoms (self-building pages).
+      ensureBlockRefs(noteName(path));
+      ensureAtoms(noteName(path));
+
       const ps = getPendingScroll();
       if (ps && ps.path === path) {
         setPendingScroll(null);
@@ -293,6 +321,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
     return () => {
       disposed = true;
       unsubPages();
+      unsubRefs();
       window.clearTimeout(saveTimer.current);
       const view = viewRef.current;
       if (view) {

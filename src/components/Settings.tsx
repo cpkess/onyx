@@ -153,6 +153,13 @@ function Editor() {
         <option value="live">Live Preview</option>
         <option value="reading">Reading</option>
       </select>
+      <div className="mt-4">
+        <Checkbox
+          label="Block outliner (Tab/Shift-Tab to nest bullets, Enter to split, fold subtrees)"
+          checked={settings.outliner}
+          onChange={(v) => setSettings({ outliner: v })}
+        />
+      </div>
     </Row>
   );
 }
