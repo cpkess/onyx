@@ -4,6 +4,7 @@ import { api, type AiConfig, type NightSettings, type AtomsSettings } from "../l
 import { useStore } from "../state/store";
 import { commands, effectiveKeys, eventToCombo } from "../commands/registry";
 import type { EditorMode } from "../editor/render/core";
+import type { Category } from "../settings";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { currentVersion, checkForUpdate, installUpdate } from "../lib/updater";
 import { NightTab } from "../features/night/NightTab";
@@ -225,7 +226,85 @@ function Files() {
           placeholder="templates"
         />
       </Row>
+      <CategoriesEditor />
     </div>
+  );
+}
+
+const catInput =
+  "rounded border border-black/10 bg-transparent px-2 py-1 text-sm outline-none focus:border-[var(--onyx-accent)] dark:border-white/10";
+
+function slug(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+function CategoriesEditor() {
+  const settings = useStore((s) => s.settings);
+  const setSettings = useStore((s) => s.setSettings);
+  const cats = settings.categories;
+
+  const update = (i: number, patch: Partial<Category>) =>
+    setSettings({ categories: cats.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
+  const remove = (i: number) =>
+    setSettings({ categories: cats.filter((_, j) => j !== i) });
+  const add = () =>
+    setSettings({
+      categories: [...cats, { id: "", name: "", folder: "", trigger: "", template: "" }],
+    });
+
+  return (
+    <Row>
+      <label className={label}>Note categories</label>
+      <p className="mb-2 text-xs text-neutral-400">
+        A category places new notes in a folder and stamps a <code>type:</code> field. Its
+        trigger character autocompletes links to that category (e.g. <code>@</code> for people,{" "}
+        <code>+</code> for projects).
+      </p>
+      <div className="space-y-2">
+        {cats.map((c, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input
+              className={`${catInput} w-24`}
+              value={c.name}
+              placeholder="Name"
+              onChange={(e) => update(i, { name: e.target.value, id: slug(e.target.value) })}
+            />
+            <input
+              className={`${catInput} w-28`}
+              value={c.folder}
+              placeholder="Folder"
+              onChange={(e) => update(i, { folder: e.target.value })}
+            />
+            <input
+              className={`${catInput} w-12 text-center`}
+              value={c.trigger}
+              maxLength={2}
+              placeholder="@"
+              onChange={(e) => update(i, { trigger: e.target.value })}
+            />
+            <input
+              className={`${catInput} min-w-0 flex-1`}
+              value={c.template}
+              placeholder="template path (optional)"
+              onChange={(e) => update(i, { template: e.target.value })}
+            />
+            <button
+              onClick={() => remove(i)}
+              className="shrink-0 rounded px-2 py-1 text-sm text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10"
+              title="Remove category"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={add}
+        className="mt-2 rounded-md bg-black/5 px-3 py-1 text-sm text-neutral-700 hover:bg-black/10 dark:bg-white/10 dark:text-neutral-200"
+      >
+        + Add category
+      </button>
+    </Row>
   );
 }
 

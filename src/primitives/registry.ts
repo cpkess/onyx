@@ -1,6 +1,7 @@
 import { renderInline } from "../editor/render/markdown";
 import { getCachedBlockRefs, getCachedAtoms } from "../dataview/blockrefs";
-import type { BlockRef } from "../lib/api";
+import { getCachedPages } from "../dataview/pages";
+import type { BlockRef, Page } from "../lib/api";
 
 /**
  * A "primitive" is a typed page-body widget that smartly organizes a page's
@@ -175,6 +176,43 @@ const insights = atomPrimitive(
   /^\s*(insight|idea|learning|takeaway|realized)\b/i
 );
 
+/** The `[[Parent]]` targets named in a page's `parent` field (name part only). */
+function parentTargets(page: Page): string[] {
+  const p = (page.fields as Record<string, unknown> | undefined)?.parent;
+  const vals = Array.isArray(p) ? p.map(String) : p != null ? [String(p)] : [];
+  const out: string[] = [];
+  for (const v of vals) {
+    const m = /\[\[([^\]]+)\]\]/.exec(v);
+    if (m) out.push(m[1].split("|")[0].split("#")[0].trim());
+  }
+  return out;
+}
+
+/** Notes whose `parent::` field points at this page (epics under a project,
+ *  sub-notes under a person), grouped by the child's `type`. */
+const children: Primitive = {
+  title: "Sub-notes",
+  render(_params, ctx) {
+    const target = ctx.pageName.toLowerCase();
+    const kids = getCachedPages().filter(
+      (p) => p.path !== ctx.currentPath && parentTargets(p).some((n) => n.toLowerCase() === target)
+    );
+    if (kids.length === 0) return empty("No sub-notes.");
+    const items = kids
+      .map((p) => {
+        const type = String((p.fields as Record<string, unknown>)?.type ?? "");
+        const chip = type ? `<span class="onyx-prim-src">${escHtml(type)}</span>` : "";
+        return (
+          `<li><a class="tok-wikilink" data-wikilink="${escAttr(p.name)}">${escHtml(
+            p.name
+          )}</a>${chip}</li>`
+        );
+      })
+      .join("");
+    return `<ul class="onyx-prim-list">${items}</ul>`;
+  },
+};
+
 export const primitives: Record<string, Primitive> = {
   todo,
   notes,
@@ -182,6 +220,7 @@ export const primitives: Record<string, Primitive> = {
   decisions,
   "pain-points": painPoints,
   insights,
+  children,
 };
 
 /** Parse an `onyx-primitive` fence body (`type` + simple `key: value` lines). */

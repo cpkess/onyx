@@ -10,6 +10,7 @@ import {
 } from "../settings";
 import { setHotkeyOverrides } from "../commands/registry";
 import { dailyRelPath } from "../lib/daily";
+import { categoryById, newCategoryNoteBody } from "../lib/categories";
 import { invalidatePages } from "../dataview/pages";
 import { trackEvent } from "../features/night/track";
 import {
@@ -89,6 +90,11 @@ interface AppStore {
   toggleBookmark: (path: string) => void;
   newNote: () => Promise<void>;
   openDailyNote: (date?: Date) => Promise<void>;
+  createCategoryNote: (
+    id: string,
+    name: string,
+    opts?: { parent?: string; open?: boolean }
+  ) => Promise<string | null>;
   setTemplatePickerOpen: (open: boolean) => void;
   setDatePickerOpen: (open: boolean) => void;
   setGraphOpen: (open: boolean) => void;
@@ -406,6 +412,36 @@ export const useStore = create<AppStore>((set, get) => {
         get().openNote(newRel);
       } catch (e) {
         alert(`Could not create daily note: ${e}`);
+      }
+    },
+
+    createCategoryNote: async (id, name, opts = {}) => {
+      const s2 = get().settings;
+      const cat = categoryById(id, s2.categories);
+      if (!cat) return null;
+      const clean = name.trim();
+      if (!clean) return null;
+      const folder = cat.folder.trim().replace(/\/+$/, "");
+      const rel = `${folder ? folder + "/" : ""}${clean}.md`;
+      // Reuse an existing note of this name if there is one.
+      const existing = await api.resolveLink(clean).catch(() => null);
+      if (existing) {
+        if (opts.open) get().openNote(existing);
+        return existing;
+      }
+      const templateText = cat.template
+        ? await api.readNote(cat.template).catch(() => "")
+        : "";
+      const content = newCategoryNoteBody(cat, clean, templateText, opts.parent);
+      try {
+        const newRel = await api.createNoteWithContent(rel, content);
+        await get().refreshTree();
+        invalidatePages();
+        if (opts.open) get().openNote(newRel);
+        return newRel;
+      } catch (e) {
+        console.error("createCategoryNote failed", e);
+        return null;
       }
     },
 

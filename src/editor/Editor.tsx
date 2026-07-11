@@ -191,6 +191,10 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
     const callbacks = {
       currentPath: path,
       getNoteNames: () => namesRef.current,
+      getCategories: () => useStore.getState().settings.categories,
+      createCategoryNote: (id: string, name: string) => {
+        void useStore.getState().createCategoryNote(id, name);
+      },
       onFollowLink: async (name: string, anchor?: string) => {
         const resolved = await api.resolveLink(name);
         if (resolved) {

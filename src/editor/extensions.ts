@@ -6,9 +6,14 @@ import {
   autocompletion,
   CompletionContext,
   CompletionResult,
+  type Completion,
+  type CompletionSource,
 } from "@codemirror/autocomplete";
 import { renderEngine, noteNamesFacet, type RenderCallbacks } from "./render/core";
 import { nodeRules, regexRules } from "./render/rules";
+import { getCachedPages } from "../dataview/pages";
+import { escapeRegExp, notesInCategory } from "../lib/categories";
+import type { Category } from "../settings";
 
 export { noteNamesFacet };
 
@@ -16,6 +21,10 @@ export { noteNamesFacet };
 export interface EditorCallbacks extends RenderCallbacks {
   /** Provide current note names for wikilink autocomplete. */
   getNoteNames: () => string[];
+  /** Current note categories (for typed-link triggers like `@`). */
+  getCategories: () => Category[];
+  /** Create a categorized note in the background (typed-link create-on-miss). */
+  createCategoryNote: (id: string, name: string) => void;
 }
 
 /** Source-token styling. The render engine hides the markers on inactive lines. */
@@ -53,9 +62,9 @@ function clickHandler(cb: EditorCallbacks): Extension {
   });
 }
 
-/** Autocomplete for `[[` wikilinks. */
-function wikilinkCompletion(cb: EditorCallbacks): Extension {
-  const source = (context: CompletionContext): CompletionResult | null => {
+/** Autocomplete source for `[[` wikilinks. */
+function wikilinkSource(cb: EditorCallbacks): CompletionSource {
+  return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(/\[\[([^\]\n]*)$/);
     if (!before) return null;
     const typed = before.text.slice(2).toLowerCase();
@@ -68,7 +77,7 @@ function wikilinkCompletion(cb: EditorCallbacks): Extension {
         type: "text",
         // Only add the closing `]]` if closeBrackets hasn't already inserted one
         // (otherwise we'd produce `[[name]]]]`). Cursor lands after the brackets.
-        apply: (view: EditorView, _c: unknown, from: number, to: number) => {
+        apply: (view: EditorView, _c: Completion, from: number, to: number) => {
           const hasClose = view.state.sliceDoc(to, to + 2) === "]]";
           view.dispatch({
             changes: { from, to, insert: hasClose ? n : `${n}]]` },
@@ -78,7 +87,59 @@ function wikilinkCompletion(cb: EditorCallbacks): Extension {
       }));
     return { from: before.from + 2, options, validFor: /^[^\]\n]*$/ };
   };
-  return autocompletion({ override: [source] });
+}
+
+/** Replace [from,to] with a `[[name]]` wikilink, cursor after the brackets. */
+function insertWikilink(view: EditorView, from: number, to: number, name: string) {
+  view.dispatch({
+    changes: { from, to, insert: `[[${name}]]` },
+    selection: { anchor: from + name.length + 4 },
+  });
+}
+
+/**
+ * Typed-link triggers: a single source that, at query time, checks each
+ * configured category's trigger char (e.g. `@`, `+`) at the cursor. On a match
+ * it offers that category's notes; selecting one inserts a plain `[[Name]]`.
+ * A "Create …" option makes the note in the category folder + `type:` field.
+ */
+function categorySource(cb: EditorCallbacks): CompletionSource {
+  return (context: CompletionContext): CompletionResult | null => {
+    for (const cat of cb.getCategories()) {
+      if (!cat.trigger) continue;
+      // trigger, then either a word-ish run (allowing inner spaces) or nothing.
+      const re = new RegExp(escapeRegExp(cat.trigger) + "([\\w.'-][\\w .'-]*|)$");
+      const before = context.matchBefore(re);
+      if (!before) continue;
+      // Require a word boundary before the trigger (so "email@x" / "a+b" skip).
+      if (before.from > 0 && !/\s/.test(context.state.sliceDoc(before.from - 1, before.from))) {
+        continue;
+      }
+      const typed = before.text.slice(cat.trigger.length).trim();
+      const typedLower = typed.toLowerCase();
+      const names = notesInCategory(getCachedPages(), cat)
+        .filter((n) => !typedLower || n.toLowerCase().includes(typedLower))
+        .slice(0, 50);
+      const options: Completion[] = names.map((n) => ({
+        label: n,
+        type: "text",
+        apply: (view: EditorView, _c: Completion, from: number, to: number) =>
+          insertWikilink(view, from, to, n),
+      }));
+      if (typed && !names.some((n) => n.toLowerCase() === typedLower)) {
+        options.push({
+          label: `➕ Create "${typed}" as ${cat.name}`,
+          type: "text",
+          apply: (view: EditorView, _c: Completion, from: number, to: number) => {
+            insertWikilink(view, from, to, typed);
+            cb.createCategoryNote(cat.id, typed);
+          },
+        });
+      }
+      return { from: before.from, options, validFor: re };
+    }
+    return null;
+  };
 }
 
 /** All Onyx-specific editor extensions. */
@@ -87,7 +148,7 @@ export function onyxExtensions(cb: EditorCallbacks): Extension[] {
     syntaxHighlighting(markdownHighlight),
     renderEngine(cb, nodeRules, regexRules),
     clickHandler(cb),
-    wikilinkCompletion(cb),
+    autocompletion({ override: [wikilinkSource(cb), categorySource(cb)] }),
     EditorView.lineWrapping,
   ];
 }

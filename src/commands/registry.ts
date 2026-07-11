@@ -33,6 +33,18 @@ function shiftJournal(delta: number) {
   void st.openDailyNote(shiftDays(base, delta));
 }
 
+/** Per-category "New <Name>…" commands, generated from the current settings.
+ *  Merged into the command palette (dynamic, so not in the static `commands`). */
+export function categoryCommands(): Command[] {
+  return s()
+    .settings.categories.filter((c) => c.id && c.name)
+    .map((c) => ({
+      id: `new-${c.id}`,
+      name: `New ${c.name}…`,
+      run: () => void s().createCategoryNote(c.id, "Untitled", { open: true }),
+    }));
+}
+
 export const commands: Command[] = [
   { id: "command-palette", name: "Open command palette", keys: "mod+p", run: () => s().openPalette("commands") },
   { id: "quick-open", name: "Quick switcher: open note", keys: "mod+o", run: () => s().openPalette("files") },

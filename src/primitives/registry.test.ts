@@ -3,16 +3,20 @@ import type { BlockRef } from "../lib/api";
 
 // Isolate the primitive logic from its two dependencies: the block-refs cache
 // (seeded per-test) and markdown rendering (passthrough so we can assert text).
-import type { Atom } from "../lib/api";
+import type { Atom, Page } from "../lib/api";
 
 const h = vi.hoisted(() => ({
   refs: {} as Record<string, BlockRef[]>,
   atoms: {} as Record<string, Atom[]>,
+  pages: [] as Page[],
 }));
 
 vi.mock("../dataview/blockrefs", () => ({
   getCachedBlockRefs: (name: string) => h.refs[name.toLowerCase()],
   getCachedAtoms: (name: string) => h.atoms[name.toLowerCase()],
+}));
+vi.mock("../dataview/pages", () => ({
+  getCachedPages: () => h.pages,
 }));
 vi.mock("../editor/render/markdown", () => ({
   renderInline: (s: string) => s,
@@ -57,9 +61,27 @@ function atom(over: Partial<Atom>): Atom {
   };
 }
 
+function pageFix(over: Partial<Page>): Page {
+  return {
+    path: "x.md",
+    name: "x",
+    folder: "",
+    tags: [],
+    mtime: 0,
+    ctime: 0,
+    size: 0,
+    fields: {},
+    tasks: [],
+    outlinks: [],
+    inlinks: [],
+    ...over,
+  };
+}
+
 beforeEach(() => {
   h.refs = {};
   h.atoms = {};
+  h.pages = [];
 });
 
 describe("todo primitive", () => {
@@ -237,9 +259,32 @@ describe("atom-backed primitives", () => {
   });
 });
 
+describe("children primitive", () => {
+  it("lists notes whose parent field points at this page, with type chips", () => {
+    h.pages = [
+      pageFix({ name: "Epic One", path: "Projects/Epic One.md", fields: { type: "project", parent: "[[Project X]]" } }),
+      pageFix({ name: "Epic Two", path: "Projects/Epic Two.md", fields: { parent: "[[Project X|the X]]" } }),
+      pageFix({ name: "Unrelated", path: "n.md", fields: { parent: "[[Other]]" } }),
+      pageFix({ name: "No parent", path: "m.md" }),
+    ];
+    const html = primitives.children.render({}, ctx);
+    expect(html).toContain('data-wikilink="Epic One"');
+    expect(html).toContain('data-wikilink="Epic Two"'); // alias form still matches
+    expect(html).toContain("project"); // type chip
+    expect(html).not.toContain("Unrelated");
+    expect(html).not.toContain("No parent");
+  });
+
+  it("excludes the page's own note and shows empty state", () => {
+    h.pages = [pageFix({ name: "Project X", path: SELF, fields: { parent: "[[Project X]]" } })];
+    expect(primitives.children.render({}, ctx)).toContain("No sub-notes.");
+  });
+});
+
 describe("registry", () => {
-  it("registers all six primitives", () => {
+  it("registers all primitives", () => {
     expect(Object.keys(primitives).sort()).toEqual([
+      "children",
       "decisions",
       "insights",
       "mentions",

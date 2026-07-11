@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, noteName, type SearchResult, type TreeNode } from "../lib/api";
 import { useStore, type PaletteMode } from "../state/store";
 import { kindLabel } from "../features/atoms/kinds";
-import { commands, type Command } from "../commands/registry";
+import { commands, categoryCommands, type Command } from "../commands/registry";
 import { parseNaturalDate } from "../lib/dateParse";
 
 function flatten(nodes: TreeNode[], out: string[] = []): string[] {
@@ -53,7 +53,8 @@ export function CommandPalette() {
 
   const commandResults = useMemo<Command[]>(() => {
     const q = query.trim().toLowerCase();
-    return commands.filter((c) => !q || c.name.toLowerCase().includes(q));
+    const all = [...commands, ...categoryCommands()];
+    return all.filter((c) => !q || c.name.toLowerCase().includes(q));
   }, [query]);
 
   useEffect(() => {

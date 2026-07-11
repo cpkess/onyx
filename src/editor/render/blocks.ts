@@ -153,7 +153,12 @@ const primitiveRule: NodeRule = (node, ctx) => {
   ctx.replace(
     startLine.from,
     endLine.to,
-    new PrimitiveWidget(code.join("\n"), blockRefsVersion(), ctx.cb.currentPath ?? null),
+    // Include pagesVersion so page-driven primitives (e.g. `children`) refresh too.
+    new PrimitiveWidget(
+      code.join("\n"),
+      blockRefsVersion() + pagesVersion(),
+      ctx.cb.currentPath ?? null
+    ),
     true
   );
 };

@@ -1,5 +1,14 @@
 import type { EditorMode } from "./editor/render/core";
 
+/** A note category (People, Projects, …) — a folder + optional typed-link trigger. */
+export interface Category {
+  id: string; // stable key, also the `type:` frontmatter value (e.g. "person")
+  name: string; // display label (e.g. "Person")
+  folder: string; // default folder for new notes of this category
+  trigger: string; // single char that autocompletes this category (e.g. "@"); "" = none
+  template: string; // optional template note path
+}
+
 export interface Settings {
   accent: string;
   fontSize: number;
@@ -15,6 +24,7 @@ export interface Settings {
   weekStart: 0 | 1; // calendar week start: 0 = Sunday, 1 = Monday
   templatesFolder: string;
   outliner: boolean; // Logseq-style block outliner keys (Tab/Enter/fold)
+  categories: Category[]; // typed note categories (People, Projects, …)
   hotkeys: Record<string, string>; // commandId -> combo override
 }
 
@@ -33,6 +43,10 @@ export const defaultSettings: Settings = {
   weekStart: 0,
   templatesFolder: "templates",
   outliner: true,
+  categories: [
+    { id: "person", name: "Person", folder: "People", trigger: "@", template: "" },
+    { id: "project", name: "Project", folder: "Projects", trigger: "+", template: "" },
+  ],
   hotkeys: {},
 };
 
