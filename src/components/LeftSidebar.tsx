@@ -2,10 +2,9 @@ import { useEffect, useState } from "react";
 import { api, noteName } from "../lib/api";
 import { useStore, type LeftTab } from "../state/store";
 import { FileTree } from "./FileTree";
-import { CalendarTab } from "./CalendarTab";
 
 // The left rail is the "navigate / find" hub: a small view switcher above the
-// content (Files · Bookmarks · Tags · Calendar).
+// content (Files · Bookmarks · Tags).
 export function LeftSidebar() {
   const tab = useStore((s) => s.leftTab);
   const setTab = useStore((s) => s.setLeftTab);
@@ -14,7 +13,6 @@ export function LeftSidebar() {
     ["files", "Files", "Files"],
     ["bookmarks", "★", "Bookmarks"],
     ["tags", "#", "Tags"],
-    ["calendar", "📅", "Calendar"],
   ];
 
   return (
@@ -39,7 +37,6 @@ export function LeftSidebar() {
         {tab === "files" && <FileTree />}
         {tab === "bookmarks" && <BookmarksView />}
         {tab === "tags" && <TagsView />}
-        {tab === "calendar" && <CalendarTab />}
       </div>
     </div>
   );

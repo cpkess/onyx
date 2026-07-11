@@ -30,8 +30,8 @@ import {
 
 type Theme = "dark" | "light";
 export type PaletteMode = "files" | "commands" | "semantic" | "atoms";
-export type SidebarTab = "note" | "assist" | "atoms" | "overnight";
-export type LeftTab = "files" | "bookmarks" | "tags" | "calendar";
+export type SidebarTab = "note" | "assist" | "atoms" | "calendar";
+export type LeftTab = "files" | "bookmarks" | "tags";
 export type AiTool = "assist" | "chat" | "tools" | "weave";
 
 interface AppStore {

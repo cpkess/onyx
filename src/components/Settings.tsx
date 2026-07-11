@@ -6,6 +6,7 @@ import { commands, effectiveKeys, eventToCombo } from "../commands/registry";
 import type { EditorMode } from "../editor/render/core";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { currentVersion, checkForUpdate, installUpdate } from "../lib/updater";
+import { NightTab } from "../features/night/NightTab";
 
 type Tab = "appearance" | "editor" | "files" | "daily" | "hotkeys" | "ai" | "night" | "atoms" | "about";
 
@@ -74,7 +75,19 @@ export function Settings() {
           {tab === "daily" && <Daily />}
           {tab === "hotkeys" && <Hotkeys />}
           {tab === "ai" && <AiSettings />}
-          {tab === "night" && <NightShift />}
+          {tab === "night" && (
+            <div>
+              <NightShift />
+              <div className="mt-8 border-t border-black/10 pt-6 dark:border-white/10">
+                <h3 className="mb-3 text-sm font-semibold text-neutral-900 dark:text-white">
+                  Nightly review
+                </h3>
+                <div className="h-[30rem] overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
+                  <NightTab />
+                </div>
+              </div>
+            </div>
+          )}
           {tab === "atoms" && <AtomsSettingsTab />}
           {tab === "about" && <About />}
         </div>
