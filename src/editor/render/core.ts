@@ -1,6 +1,6 @@
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { EditorState, Extension, Facet, Range, StateField } from "@codemirror/state";
+import { EditorState, Extension, Facet, Range, StateEffect, StateField } from "@codemirror/state";
 import type { SyntaxNodeRef } from "@lezer/common";
 
 /** Existing note names (lowercased file stems) for wikilink existence checks. */
@@ -9,6 +9,14 @@ export const noteNamesFacet = Facet.define<Set<string>, Set<string>>({
 });
 
 export type EditorMode = "source" | "live" | "reading";
+
+/**
+ * Force a decoration rebuild without touching the selection. Background cache
+ * refreshes (linked references, dataview pages) use this instead of dispatching
+ * a selection transaction, which CodeMirror's autocomplete would treat as a
+ * cursor move and close the open completion popup.
+ */
+export const rerenderEffect = StateEffect.define<null>();
 
 /** Current editor mode. Source = no rendering; Live = reveal active line;
  *  Reading = render everything (no source revealed). */
@@ -173,6 +181,7 @@ export function renderEngine(
       if (
         tr.docChanged ||
         tr.selection ||
+        tr.effects.some((e) => e.is(rerenderEffect)) ||
         tr.startState.facet(noteNamesFacet) !== tr.state.facet(noteNamesFacet) ||
         tr.startState.facet(editorModeFacet) !== tr.state.facet(editorModeFacet)
       ) {

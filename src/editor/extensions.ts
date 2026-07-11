@@ -63,7 +63,19 @@ function wikilinkCompletion(cb: EditorCallbacks): Extension {
       .getNoteNames()
       .filter((n) => n.toLowerCase().includes(typed))
       .slice(0, 50)
-      .map((n) => ({ label: n, type: "text", apply: `${n}]]` }));
+      .map((n) => ({
+        label: n,
+        type: "text",
+        // Only add the closing `]]` if closeBrackets hasn't already inserted one
+        // (otherwise we'd produce `[[name]]]]`). Cursor lands after the brackets.
+        apply: (view: EditorView, _c: unknown, from: number, to: number) => {
+          const hasClose = view.state.sliceDoc(to, to + 2) === "]]";
+          view.dispatch({
+            changes: { from, to, insert: hasClose ? n : `${n}]]` },
+            selection: { anchor: from + n.length + 2 },
+          });
+        },
+      }));
     return { from: before.from + 2, options, validFor: /^[^\]\n]*$/ };
   };
   return autocompletion({ override: [source] });

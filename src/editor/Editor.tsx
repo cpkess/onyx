@@ -24,7 +24,7 @@ import { EditorToolbar } from "./EditorToolbar";
 import { queueIndex } from "../lib/autoindex";
 import { trackEvent } from "../features/night/track";
 import { setHost, getPendingScroll, setPendingScroll } from "./render/host";
-import { editorModeFacet, type EditorMode } from "./render/core";
+import { editorModeFacet, rerenderEffect, type EditorMode } from "./render/core";
 import { ensurePages, onPagesChanged } from "../dataview/pages";
 import { ensureBlockRefs, ensureAtoms, onBlockRefsChanged } from "../dataview/blockrefs";
 import { outlinerExtensions, outlinerKeymap } from "./outliner";
@@ -171,16 +171,17 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
       resolvePath: (name: string) => api.resolveLink(name),
     });
 
-    // Re-render dataview widgets when the page cache changes.
+    // Re-render dataview widgets when the page cache changes. Use a rebuild
+    // effect (not a selection dispatch) so an open autocomplete popup survives.
     const unsubPages = onPagesChanged(() => {
       const v = viewRef.current;
-      if (v) v.dispatch({ selection: v.state.selection });
+      if (v) v.dispatch({ effects: rerenderEffect.of(null) });
     });
 
     // Re-render the Linked References section when its cache changes.
     const unsubRefs = onBlockRefsChanged(() => {
       const v = viewRef.current;
-      if (v) v.dispatch({ selection: v.state.selection });
+      if (v) v.dispatch({ effects: rerenderEffect.of(null) });
     });
 
     const callbacks = {
@@ -228,10 +229,13 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
           search({ top: true }),
           keymap.of([
             ...closeBracketsKeymap,
+            // Completion accept (Enter/arrows) must win over the outliner keys
+            // while the wikilink popup is open — otherwise Enter splits the block
+            // instead of selecting. These bindings no-op when no popup is active.
+            ...completionKeymap,
             ...outlinerKeymap,
             ...defaultKeymap,
             ...historyKeymap,
-            ...completionKeymap,
             ...foldKeymap,
             ...searchKeymap,
             indentWithTab,
@@ -296,14 +300,14 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
 
       window.setTimeout(() => {
         if (!disposed && viewRef.current === view) {
-          view.dispatch({ selection: view.state.selection });
+          view.dispatch({ effects: rerenderEffect.of(null) });
         }
       }, 60);
 
       // Load Dataview pages and re-render dataview/inline-DQL widgets when ready.
       ensurePages().then(() => {
         if (!disposed && viewRef.current === view) {
-          view.dispatch({ selection: view.state.selection });
+          view.dispatch({ effects: rerenderEffect.of(null) });
         }
       });
 
