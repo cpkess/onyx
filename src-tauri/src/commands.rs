@@ -791,8 +791,9 @@ pub fn create_note_with_content(
         if base.to_lowercase().ends_with(".md") {
             base.truncate(base.len() - 3);
         }
-        // Sanitize characters awkward in filenames.
-        let base = base.replace(['/', '\\'], "-");
+        // Sanitize per segment, keeping `/` so a folder path like
+        // "Daily/2026-07-10" lands in a real subfolder (not a flattened name).
+        let base = vault::sanitize_rel_path(&base);
         let mut rel = format!("{base}.md");
         let mut n = 2;
         while vault::resolve(&ctx.root, &rel)?.exists() {

@@ -3,6 +3,7 @@ import { api, noteName, type SearchResult, type TreeNode } from "../lib/api";
 import { useStore, type PaletteMode } from "../state/store";
 import { kindLabel } from "../features/atoms/kinds";
 import { commands, type Command } from "../commands/registry";
+import { parseNaturalDate } from "../lib/dateParse";
 
 function flatten(nodes: TreeNode[], out: string[] = []): string[] {
   for (const n of nodes) {
@@ -37,6 +38,7 @@ export function CommandPalette() {
   const switchKind = useStore((s) => s.openPalette);
   const openNote = useStore((s) => s.openNote);
   const createAndOpen = useStore((s) => s.createAndOpen);
+  const openDailyNote = useStore((s) => s.openDailyNote);
   const tree = useStore((s) => s.tree);
   const recent = useStore((s) => s.recent);
 
@@ -150,7 +152,12 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const count = kind === "commands" ? commandResults.length : fileResults.length;
+  // In the quick switcher, a natural-language date offers "Open journal" at top.
+  const dateHit = kind === "files" && query.trim() ? parseNaturalDate(query) : null;
+  const count =
+    kind === "commands"
+      ? commandResults.length
+      : (dateHit ? 1 : 0) + fileResults.length;
 
   const choose = (i: number) => {
     if (kind === "commands") {
@@ -160,6 +167,14 @@ export function CommandPalette() {
         cmd.run();
       }
       return;
+    }
+    if (dateHit) {
+      if (i === 0) {
+        openDailyNote(dateHit);
+        setOpen(false);
+        return;
+      }
+      i -= 1; // shift past the date row into fileResults
     }
     const r = fileResults[i];
     if (r) {
@@ -245,37 +260,63 @@ export function CommandPalette() {
             </div>
           )}
 
-          {kind === "commands"
-            ? commandResults.map((c, i) => (
+          {kind === "commands" ? (
+            commandResults.map((c, i) => (
+              <button
+                key={c.id}
+                onMouseEnter={() => setSel(i)}
+                onClick={() => choose(i)}
+                className={`flex w-full items-center justify-between px-4 py-2 text-left ${
+                  i === sel ? "bg-black/5 dark:bg-white/10" : ""
+                }`}
+              >
+                <span className="text-sm text-neutral-800 dark:text-neutral-100">{c.name}</span>
+                {c.keys && <span className="text-xs text-neutral-400">{keyHint(c.keys)}</span>}
+              </button>
+            ))
+          ) : (
+            <>
+              {dateHit && (
                 <button
-                  key={c.id}
-                  onMouseEnter={() => setSel(i)}
-                  onClick={() => choose(i)}
-                  className={`flex w-full items-center justify-between px-4 py-2 text-left ${
-                    i === sel ? "bg-black/5 dark:bg-white/10" : ""
-                  }`}
-                >
-                  <span className="text-sm text-neutral-800 dark:text-neutral-100">{c.name}</span>
-                  {c.keys && (
-                    <span className="text-xs text-neutral-400">{keyHint(c.keys)}</span>
-                  )}
-                </button>
-              ))
-            : fileResults.map((r, i) => (
-                <button
-                  key={`${r.path}-${i}`}
-                  onMouseEnter={() => setSel(i)}
-                  onClick={() => choose(i)}
+                  onMouseEnter={() => setSel(0)}
+                  onClick={() => choose(0)}
                   className={`block w-full px-4 py-2 text-left ${
-                    i === sel ? "bg-black/5 dark:bg-white/10" : ""
+                    sel === 0 ? "bg-black/5 dark:bg-white/10" : ""
                   }`}
                 >
                   <div className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
-                    {r.title}
+                    📅 Open journal
                   </div>
-                  <div className="truncate text-xs text-neutral-400">{r.snippet || r.path}</div>
+                  <div className="truncate text-xs text-neutral-400">
+                    {dateHit.toLocaleDateString(undefined, {
+                      weekday: "short",
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </div>
                 </button>
-              ))}
+              )}
+              {fileResults.map((r, i) => {
+                const idx = dateHit ? i + 1 : i;
+                return (
+                  <button
+                    key={`${r.path}-${i}`}
+                    onMouseEnter={() => setSel(idx)}
+                    onClick={() => choose(idx)}
+                    className={`block w-full px-4 py-2 text-left ${
+                      idx === sel ? "bg-black/5 dark:bg-white/10" : ""
+                    }`}
+                  >
+                    <div className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-100">
+                      {r.title}
+                    </div>
+                    <div className="truncate text-xs text-neutral-400">{r.snippet || r.path}</div>
+                  </button>
+                );
+              })}
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -9,6 +9,7 @@ import {
   substituteTemplate,
 } from "../settings";
 import { setHotkeyOverrides } from "../commands/registry";
+import { dailyRelPath } from "../lib/daily";
 import { invalidatePages } from "../dataview/pages";
 import { trackEvent } from "../features/night/track";
 import {
@@ -48,6 +49,7 @@ interface AppStore {
   settings: Settings;
   bookmarks: string[];
   templatePickerOpen: boolean;
+  datePickerOpen: boolean;
   graphOpen: boolean;
   settingsOpen: boolean;
   sidebarOpen: boolean;
@@ -88,6 +90,7 @@ interface AppStore {
   newNote: () => Promise<void>;
   openDailyNote: (date?: Date) => Promise<void>;
   setTemplatePickerOpen: (open: boolean) => void;
+  setDatePickerOpen: (open: boolean) => void;
   setGraphOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -158,6 +161,7 @@ export const useStore = create<AppStore>((set, get) => {
     settings: defaultSettings,
     bookmarks: [],
     templatePickerOpen: false,
+    datePickerOpen: false,
     graphOpen: false,
     settingsOpen: false,
     sidebarOpen: true,
@@ -394,8 +398,7 @@ export const useStore = create<AppStore>((set, get) => {
         const t = await api.readNote(s2.dailyTemplate).catch(() => "");
         content = substituteTemplate(t, fname);
       }
-      const folder = s2.dailyFolder.trim().replace(/\/+$/, "");
-      const rel = `${folder ? folder + "/" : ""}${fname}.md`;
+      const rel = dailyRelPath(date, s2);
       try {
         const newRel = await api.createNoteWithContent(rel, content);
         await get().refreshTree();
@@ -407,6 +410,7 @@ export const useStore = create<AppStore>((set, get) => {
     },
 
     setTemplatePickerOpen: (open) => set({ templatePickerOpen: open }),
+    setDatePickerOpen: (open) => set({ datePickerOpen: open }),
 
     setGraphOpen: (open) => set({ graphOpen: open }),
     setSettingsOpen: (open) => set({ settingsOpen: open }),

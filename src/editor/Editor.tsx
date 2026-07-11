@@ -28,6 +28,7 @@ import { editorModeFacet, rerenderEffect, type EditorMode } from "./render/core"
 import { ensurePages, onPagesChanged } from "../dataview/pages";
 import { ensureBlockRefs, ensureAtoms, onBlockRefsChanged } from "../dataview/blockrefs";
 import { outlinerExtensions, outlinerKeymap } from "./outliner";
+import { parseDailyDate, shiftDays } from "../lib/daily";
 
 /** Fold a markdown heading down to (but not including) the next same/higher heading. */
 const headingFold = foldService.of((state, from) => {
@@ -119,6 +120,9 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
   const tree = useStore((s) => s.tree);
   const mode = useStore((s) => s.noteModes[path] ?? s.settings.defaultMode);
   const outliner = useStore((s) => s.settings.outliner);
+  const settings = useStore((s) => s.settings);
+  const openDailyNote = useStore((s) => s.openDailyNote);
+  const journalDate = parseDailyDate(path, settings);
 
   // Keep the autocomplete/link name list fresh as the vault changes.
   useEffect(() => {
@@ -362,6 +366,31 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
           ))}
         </div>
       </div>
+      {journalDate && (
+        <div className="flex shrink-0 items-center justify-center gap-4 px-7 pb-1 text-xs text-neutral-500">
+          <button
+            className="rounded px-1.5 py-0.5 hover:bg-black/5 hover:text-[var(--onyx-accent)] dark:hover:bg-white/10"
+            title="Previous day"
+            onClick={() => openDailyNote(shiftDays(journalDate, -1))}
+          >
+            ‹ {shiftDays(journalDate, -1).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+          </button>
+          <button
+            className="rounded px-1.5 py-0.5 font-medium hover:bg-black/5 hover:text-[var(--onyx-accent)] dark:hover:bg-white/10"
+            title="Today's journal"
+            onClick={() => openDailyNote(new Date())}
+          >
+            Today
+          </button>
+          <button
+            className="rounded px-1.5 py-0.5 hover:bg-black/5 hover:text-[var(--onyx-accent)] dark:hover:bg-white/10"
+            title="Next day"
+            onClick={() => openDailyNote(shiftDays(journalDate, 1))}
+          >
+            {shiftDays(journalDate, 1).toLocaleDateString(undefined, { month: "short", day: "numeric" })} ›
+          </button>
+        </div>
+      )}
       <EditorToolbar path={path} />
       <div ref={ref} className="min-h-0 flex-1" />
     </div>

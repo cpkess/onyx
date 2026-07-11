@@ -11,6 +11,7 @@ import { Settings } from "./components/Settings";
 import { StatusBar } from "./components/StatusBar";
 import { HoverPreview } from "./components/HoverPreview";
 import { TemplatePicker } from "./components/TemplatePicker";
+import { DatePicker } from "./components/DatePicker";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { ImportDropZone } from "./components/ImportDropZone";
 import { runHotkey } from "./commands/registry";
@@ -149,6 +150,7 @@ export default function App() {
       <GraphView />
       <Settings />
       <TemplatePicker />
+      <DatePicker />
       <HoverPreview />
       <UpdateBanner />
       <ImportDropZone />

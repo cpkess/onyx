@@ -79,7 +79,8 @@ export function AiTools() {
   };
 
   const createAndOpen = async (title: string, content: string) => {
-    const rel = await api.createNoteWithContent(title, content);
+    // A generated title is a flat filename, not a folder path — keep "/" out.
+    const rel = await api.createNoteWithContent(title.replace(/[\\/]/g, "-"), content);
     await refreshTree();
     openNote(rel);
   };

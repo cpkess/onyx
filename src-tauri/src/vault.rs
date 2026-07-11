@@ -216,6 +216,25 @@ pub fn resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(normalized)
 }
 
+/// Sanitize a vault-relative path for use as a filename, **preserving `/` as a
+/// folder separator**. Each segment is trimmed and stripped of characters that
+/// are awkward/illegal in filenames; empty and `.`/`..` segments are dropped
+/// (path-traversal is additionally blocked by `resolve`). So `Daily/2026-07-10`
+/// stays a nested path, while a stray `:` or `*` in a segment is removed.
+pub fn sanitize_rel_path(rel: &str) -> String {
+    rel.split('/')
+        .map(|seg| {
+            seg.chars()
+                .filter(|c| !matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
+        .filter(|seg| !seg.is_empty() && seg != "." && seg != "..")
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Lexical path normalization (no filesystem access; handles `..` and `.`).
 fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -229,4 +248,29 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_rel_path;
+
+    #[test]
+    fn preserves_folders() {
+        assert_eq!(sanitize_rel_path("Daily/2026-07-10"), "Daily/2026-07-10");
+        assert_eq!(sanitize_rel_path("A/B/C"), "A/B/C");
+    }
+
+    #[test]
+    fn strips_illegal_chars_per_segment() {
+        assert_eq!(sanitize_rel_path("Da:ily/2026*07?10"), "Daily/20260710");
+        assert_eq!(sanitize_rel_path("na\\me"), "name");
+    }
+
+    #[test]
+    fn drops_empty_and_traversal_segments() {
+        assert_eq!(sanitize_rel_path("Daily//2026-07-10"), "Daily/2026-07-10");
+        assert_eq!(sanitize_rel_path("../../etc/passwd"), "etc/passwd");
+        assert_eq!(sanitize_rel_path("./Daily/./x"), "Daily/x");
+        assert_eq!(sanitize_rel_path("  Daily / note "), "Daily/note");
+    }
 }

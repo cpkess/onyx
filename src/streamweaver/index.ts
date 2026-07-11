@@ -139,7 +139,10 @@ function blockRange(doc: string, blockText: string): { from: number; to: number 
 /** Apply an accepted weave to the active note (and target notes). */
 export async function applyWeave(w: Weave, currentPath: string | null): Promise<void> {
   if (w.kind === "create") {
-    await api.createNoteWithContent(w.name, `# ${w.name}\n`).catch(() => {});
+    // Entity name is a flat filename, not a folder path — keep "/" out.
+    await api
+      .createNoteWithContent(w.name.replace(/[\\/]/g, "-"), `# ${w.name}\n`)
+      .catch(() => {});
     return;
   }
   const view = getActiveEditor();

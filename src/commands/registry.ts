@@ -10,6 +10,7 @@ import { regenerateActivePage } from "../lib/regenerate";
 import { composeActivePage } from "../lib/compose";
 import { manualUpdateCheck } from "../lib/updater";
 import { pickAndImport } from "../lib/importDoc";
+import { parseDailyDate, shiftDays } from "../lib/daily";
 import { api } from "../lib/api";
 import { invalidatePages } from "../dataview/pages";
 import { invalidateBlockRefs } from "../dataview/blockrefs";
@@ -24,12 +25,24 @@ export interface Command {
 
 const s = () => useStore.getState();
 
+/** Open the journal `delta` days from the current one (or from today if the
+ *  active note isn't a journal). */
+function shiftJournal(delta: number) {
+  const st = s();
+  const base = (st.activeTab && parseDailyDate(st.activeTab, st.settings)) || new Date();
+  void st.openDailyNote(shiftDays(base, delta));
+}
+
 export const commands: Command[] = [
   { id: "command-palette", name: "Open command palette", keys: "mod+p", run: () => s().openPalette("commands") },
   { id: "quick-open", name: "Quick switcher: open note", keys: "mod+o", run: () => s().openPalette("files") },
   { id: "search-vault", name: "Search vault", keys: "mod+shift+f", run: () => s().openPalette("files") },
   { id: "new-note", name: "Create new note", keys: "mod+n", run: () => void s().newNote() },
   { id: "daily-note", name: "Open today's daily note", keys: "mod+d", run: () => void s().openDailyNote() },
+  { id: "goto-date", name: "Go to date…", keys: "mod+shift+d", run: () => s().setDatePickerOpen(true) },
+  { id: "journal-prev-day", name: "Journal: previous day", keys: "mod+alt+arrowleft", run: () => shiftJournal(-1) },
+  { id: "journal-next-day", name: "Journal: next day", keys: "mod+alt+arrowright", run: () => shiftJournal(1) },
+  { id: "journal-today", name: "Journal: go to today", run: () => void s().openDailyNote() },
   { id: "insert-template", name: "Insert template…", run: () => s().setTemplatePickerOpen(true) },
   {
     id: "reindex-vault",
