@@ -1,9 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { TreeNode } from "../lib/api";
 import { useStore } from "../state/store";
 import { ContextMenu, type MenuState } from "./ContextMenu";
 import { pickAndImport, onImportProgress, type ImportProgress } from "../lib/importDoc";
+import { getCachedPages, ensurePages, onPagesChanged } from "../dataview/pages";
+import { buildHierarchy, type Hierarchy } from "../lib/hierarchy";
 
 // The path currently being dragged (module-level: survives across TreeItems).
 let draggedPath: string | null = null;
@@ -12,6 +14,8 @@ function parentDir(path: string): string {
   const i = path.lastIndexOf("/");
   return i === -1 ? "" : path.slice(0, i);
 }
+
+const EMPTY_ANCESTORS = new Set<string>();
 
 function canDrop(destDir: string): boolean {
   const src = draggedPath;
@@ -29,16 +33,29 @@ interface TreeCtx {
   setRenameValue: (v: string) => void;
   commitRename: (node: TreeNode) => void;
   cancelRename: () => void;
+  hier: Hierarchy;
 }
 const Ctx = createContext<TreeCtx | null>(null);
 
-function TreeItem({ node, depth }: { node: TreeNode; depth: number }) {
-  const [open, setOpen] = useState(depth < 1);
+function TreeItem({
+  node,
+  depth,
+  ancestors = EMPTY_ANCESTORS,
+}: {
+  node: TreeNode;
+  depth: number;
+  ancestors?: Set<string>;
+}) {
+  const ctx = useContext(Ctx)!;
+  // Sub-notes (via the `parent` field) that nest under this note like a folder.
+  const kids = node.is_dir
+    ? []
+    : (ctx.hier.childrenOf.get(node.path) ?? []).filter((c) => !ancestors.has(c.path));
+  const [open, setOpen] = useState(node.is_dir ? depth < 1 : true);
   const [dragOver, setDragOver] = useState(false);
   const openNote = useStore((s) => s.openNote);
   const activeTab = useStore((s) => s.activeTab);
   const movePath = useStore((s) => s.movePath);
-  const ctx = useContext(Ctx)!;
   const pad = { paddingLeft: `${depth * 12 + 8}px` };
   const destDir = node.is_dir ? node.path : parentDir(node.path);
 
@@ -105,32 +122,56 @@ function TreeItem({ node, depth }: { node: TreeNode; depth: number }) {
           <span className="truncate font-medium">{node.name}</span>
         </button>
         {open &&
-          node.children.map((c) => <TreeItem key={c.path} node={c} depth={depth + 1} />)}
+          node.children
+            .filter((c) => !ctx.hier.relocated.has(c.path))
+            .map((c) => <TreeItem key={c.path} node={c} depth={depth + 1} />)}
       </div>
     );
   }
 
   const isActive = activeTab === node.path;
+  const childAncestors = kids.length ? new Set([...ancestors, node.path]) : ancestors;
   return (
-    <button
-      draggable
-      onDragStart={onDragStart}
-      onDragEnter={onDragOver}
-      onDragOver={onDragOver}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={onDrop}
-      onContextMenu={(e) => ctx.onContext(e, node)}
-      style={pad}
-      onClick={() => openNote(node.path)}
-      className={`flex w-full items-center gap-1 rounded py-1 pr-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/5 ${dropRing} ${
-        isActive
-          ? "bg-black/5 text-neutral-900 dark:bg-white/10 dark:text-white"
-          : "text-neutral-600 dark:text-neutral-400"
-      }`}
-    >
-      <span className="inline-block w-3" />
-      <span className="truncate">{node.name.replace(/\.md$/i, "")}</span>
-    </button>
+    <div>
+      <button
+        draggable
+        onDragStart={onDragStart}
+        onDragEnter={onDragOver}
+        onDragOver={onDragOver}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        onContextMenu={(e) => ctx.onContext(e, node)}
+        style={pad}
+        onClick={() => openNote(node.path)}
+        className={`flex w-full items-center gap-1 rounded py-1 pr-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/5 ${dropRing} ${
+          isActive
+            ? "bg-black/5 text-neutral-900 dark:bg-white/10 dark:text-white"
+            : "text-neutral-600 dark:text-neutral-400"
+        }`}
+      >
+        {kids.length ? (
+          <span
+            role="button"
+            title={open ? "Collapse sub-notes" : "Expand sub-notes"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((o) => !o);
+            }}
+            className="inline-block w-3 text-neutral-400"
+          >
+            {open ? "▾" : "▸"}
+          </span>
+        ) : (
+          <span className="inline-block w-3" />
+        )}
+        <span className="truncate">{node.name.replace(/\.md$/i, "")}</span>
+      </button>
+      {kids.length > 0 &&
+        open &&
+        kids.map((c) => (
+          <TreeItem key={c.path} node={c} depth={depth + 1} ancestors={childAncestors} />
+        ))}
+    </div>
   );
 }
 
@@ -155,6 +196,15 @@ export function FileTree() {
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
 
   useEffect(() => onImportProgress(setImportProgress), []);
+
+  // Virtual parent/child hierarchy (sub-notes nested under their parent note).
+  const [pv, setPv] = useState(0);
+  useEffect(() => {
+    ensurePages();
+    return onPagesChanged(() => setPv((v) => v + 1));
+  }, []);
+  const hier = useMemo(() => buildHierarchy(getCachedPages()), [pv, tree]);
+
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -265,6 +315,7 @@ export function FileTree() {
     setRenameValue,
     commitRename,
     cancelRename: () => setRenaming(null),
+    hier,
   };
 
   return (
@@ -341,9 +392,11 @@ export function FileTree() {
           {tree.length === 0 && !mode && (
             <p className="px-3 py-2 text-xs text-neutral-400">No markdown notes yet.</p>
           )}
-          {tree.map((n) => (
-            <TreeItem key={n.path} node={n} depth={0} />
-          ))}
+          {tree
+            .filter((n) => !hier.relocated.has(n.path))
+            .map((n) => (
+              <TreeItem key={n.path} node={n} depth={0} />
+            ))}
         </div>
       </div>
       <ContextMenu menu={menu} onClose={() => setMenu(null)} />

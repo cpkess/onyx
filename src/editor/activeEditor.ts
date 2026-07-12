@@ -1,4 +1,5 @@
 import { EditorView } from "@codemirror/view";
+import { applyFrontmatter, type Prop } from "../lib/frontmatter";
 
 /**
  * Tracks the currently focused note editor so AI panels can insert text into
@@ -40,6 +41,32 @@ export function replaceActiveDoc(path: string, content: string): boolean {
   if (!active || activePath !== path) return false;
   active.dispatch({
     changes: { from: 0, to: active.state.doc.length, insert: content },
+  });
+  return true;
+}
+
+/**
+ * Rewrite the frontmatter of the note in the active editor (if it's showing
+ * `path`) from `props`, via a minimal prefix change so the body cursor/scroll
+ * is preserved. Returns true if applied (autosave + reindex then follow). Does
+ * not steal focus — the caller is typically editing in the sidebar.
+ */
+export function setFrontmatter(path: string, props: Prop[]): boolean {
+  if (!active || activePath !== path) return false;
+  const content = active.state.doc.toString();
+  const next = applyFrontmatter(content, props);
+  if (next === content) return true;
+  // Longest common suffix (the body) stays untouched.
+  let suf = 0;
+  while (
+    suf < content.length &&
+    suf < next.length &&
+    content[content.length - 1 - suf] === next[next.length - 1 - suf]
+  ) {
+    suf++;
+  }
+  active.dispatch({
+    changes: { from: 0, to: content.length - suf, insert: next.slice(0, next.length - suf) },
   });
   return true;
 }

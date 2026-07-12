@@ -1,5 +1,5 @@
 import type { RegexRule } from "./core";
-import { EmbedWidget, ImageWidget, PropertiesWidget } from "./widgets";
+import { EmbedWidget, ImageWidget } from "./widgets";
 
 const MD_IMAGE_RE = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const EMBED_RE = /!\[\[([^\]\n]+)\]\]/g;
@@ -34,23 +34,7 @@ const imagesAndEmbeds: RegexRule = (text, offset, ctx) => {
   }
 };
 
-/** YAML frontmatter at the very start of the doc → a Properties table. */
-const frontmatter: RegexRule = (text, offset, ctx) => {
-  if (offset !== 0) return;
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return;
-  const end = m[0].length;
-  if (ctx.rangeActive(0, end)) return;
-  const entries: [string, string][] = m[1]
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((l) => {
-      const i = l.indexOf(":");
-      return i === -1
-        ? ([l.trim(), ""] as [string, string])
-        : ([l.slice(0, i).trim(), l.slice(i + 1).trim()] as [string, string]);
-    });
-  ctx.replace(0, end, new PropertiesWidget(entries), true);
-};
+// NOTE: frontmatter hiding is handled up-front in `build()` (core.ts) so it can
+// reserve the range before the leading `---` is parsed as a thematic break.
 
-export const mediaRegexRules: RegexRule[] = [imagesAndEmbeds, frontmatter];
+export const mediaRegexRules: RegexRule[] = [imagesAndEmbeds];

@@ -1,0 +1,32 @@
+---
+type: project
+---
+
+# Project Aurora
+
+Owner: [[Priya]] · Design: [[Dana]]
+
+Next-gen analytics dashboard. This page mostly builds itself — the sections below
+pull from every note that links to Project Aurora, and from its sub-projects.
+
+## Epics & sub-projects
+The `children` primitive lists notes whose `parent` points here.
+
+```onyx-primitive
+type: children
+```
+
+## Open work
+```onyx-primitive
+type: todo
+```
+
+## Decisions
+```onyx-primitive
+type: decisions
+```
+
+## Discussed in
+```onyx-primitive
+type: mentions
+```

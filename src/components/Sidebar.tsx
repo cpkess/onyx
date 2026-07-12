@@ -10,7 +10,12 @@ import {
 } from "../lib/api";
 import { kindLabel, KIND_COLOR } from "../features/atoms/kinds";
 import { useStore, type SidebarTab, type AiTool } from "../state/store";
-import { appendTags, insertText, scrollToHeading } from "../editor/activeEditor";
+import { appendTags, insertText, scrollToHeading, setFrontmatter } from "../editor/activeEditor";
+import {
+  parseFrontmatter,
+  applyFrontmatter,
+  type Prop,
+} from "../lib/frontmatter";
 import { ChatPanel } from "./ChatPanel";
 import { AiTools } from "./AiTools";
 import { WeavePanel } from "./WeavePanel";
@@ -142,11 +147,80 @@ function Collapsible({
 
 const TAG_RE = /(?:^|\s)#([\w/-]+)/g;
 
+/** Editable frontmatter properties for the active note (key/value rows). */
+function PropertiesPanel({ activeTab, content }: { activeTab: string; content: string }) {
+  const [props, setProps] = useState<Prop[]>([]);
+  // Reseed from the note whenever it changes (Sidebar reloads content per note).
+  useEffect(() => setProps(parseFrontmatter(content).props), [content]);
+
+  const persist = (next: Prop[]) => {
+    if (!setFrontmatter(activeTab, next)) {
+      api
+        .readNote(activeTab)
+        .then((c) => api.writeNote(activeTab, applyFrontmatter(c, next)))
+        .catch(() => {});
+    }
+  };
+  const update = (i: number, patch: Partial<Prop>) =>
+    setProps((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
+  const remove = (i: number) => {
+    const next = props.filter((_, j) => j !== i);
+    setProps(next);
+    persist(next);
+  };
+  const add = () => setProps((ps) => [...ps, { key: "", value: "" }]);
+
+  const input =
+    "min-w-0 rounded border border-black/10 bg-transparent px-1.5 py-0.5 text-xs outline-none focus:border-[var(--onyx-accent)] dark:border-white/15";
+
+  return (
+    <div className="px-2 pb-2">
+      {props.length === 0 && (
+        <p className="mb-1 px-1 text-xs text-neutral-400">No properties.</p>
+      )}
+      {props.map((p, i) => (
+        <div key={i} className="mb-1 flex items-center gap-1">
+          <input
+            className={`${input} w-24`}
+            value={p.key}
+            placeholder="key"
+            onChange={(e) => update(i, { key: e.target.value })}
+            onBlur={() => persist(props)}
+          />
+          <input
+            className={`${input} flex-1`}
+            value={p.value}
+            placeholder="value"
+            onChange={(e) => update(i, { value: e.target.value })}
+            onBlur={() => persist(props)}
+          />
+          <button
+            onClick={() => remove(i)}
+            title="Remove property"
+            className="shrink-0 rounded px-1 text-xs text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={add}
+        className="mt-1 rounded px-1 text-xs text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        ＋ Add property
+      </button>
+    </div>
+  );
+}
+
 function NoteTab({ activeTab, content }: { activeTab: string | null; content: string }) {
   if (!activeTab) return <Empty>No note open.</Empty>;
   const tags = Array.from(new Set(Array.from(content.matchAll(TAG_RE)).map((m) => m[1])));
   return (
     <div>
+      <Collapsible title="Properties">
+        <PropertiesPanel activeTab={activeTab} content={content} />
+      </Collapsible>
       <Collapsible title="Outline">
         <OutlineTab content={content} />
       </Collapsible>

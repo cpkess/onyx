@@ -1,6 +1,6 @@
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, DecorationSet, EditorView, WidgetType } from "@codemirror/view";
-import { EditorState, Extension, Facet, Range, StateEffect, StateField } from "@codemirror/state";
+import { EditorState, Extension, Facet, Range, StateEffect, StateField, Text } from "@codemirror/state";
 import type { SyntaxNodeRef } from "@lezer/common";
 
 /** Existing note names (lowercased file stems) for wikilink existence checks. */
@@ -50,6 +50,41 @@ export function activeLines(state: EditorState): Set<number> {
 }
 
 const hidden = Decoration.replace({});
+
+/** Zero-height, invisible block widget — used to drop the frontmatter from the
+ *  body entirely (block-replaced ranges are atomic, so the cursor can't enter). */
+class HiddenBlockWidget extends WidgetType {
+  eq() {
+    return true;
+  }
+  get estimatedHeight() {
+    return 0;
+  }
+  toDOM() {
+    const el = document.createElement("div");
+    el.className = "onyx-hidden-block";
+    el.style.height = "0";
+    el.style.overflow = "hidden";
+    el.setAttribute("aria-hidden", "true");
+    return el;
+  }
+  ignoreEvent() {
+    return true;
+  }
+}
+
+/** End offset of a leading `---…---` YAML frontmatter block (incl. one trailing
+ *  blank line), or 0 if the document doesn't start with one. */
+function frontmatterEnd(doc: Text): number {
+  if (doc.lines < 2 || doc.line(1).text.trim() !== "---") return 0;
+  for (let n = 2; n <= doc.lines; n++) {
+    if (doc.line(n).text.trim() === "---") {
+      const endLine = n < doc.lines && doc.line(n + 1).text.trim() === "" ? n + 1 : n;
+      return doc.line(endLine).to;
+    }
+  }
+  return 0;
+}
 
 /** Shared context passed to every render rule. */
 export interface RenderCtx {
@@ -140,6 +175,17 @@ function build(
       return false;
     },
   };
+
+  // Frontmatter: hide the leading `---…---` block up front and RESERVE its range
+  // in `taken`, before any rule runs — otherwise the leading `---` parses as a
+  // thematic break (hrRule claims it first) and the YAML leaks into the body.
+  const fmEnd = frontmatterEnd(state.doc);
+  if (fmEnd > 0) {
+    taken.push([0, fmEnd]);
+    ranges.push(
+      Decoration.replace({ widget: new HiddenBlockWidget(), block: true }).range(0, fmEnd)
+    );
+  }
 
   // Build over the whole document. Block widgets and line decorations must come
   // from a StateField (not a ViewPlugin), so we cannot use the viewport here.

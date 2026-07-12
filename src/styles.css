@@ -551,22 +551,11 @@ body {
 }
 
 /* Frontmatter properties */
-.onyx-props {
-  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
-  border-radius: 6px;
-  padding: 0.5em 0.7em;
-  margin: 0.2em 0 0.6em;
-  font-size: 0.9em;
-}
-.onyx-prop {
-  display: flex;
-  gap: 0.6em;
-  padding: 0.12em 0;
-}
-.onyx-prop-key {
-  min-width: 8rem;
-  font-weight: 600;
-  opacity: 0.65;
+
+/* Fully-hidden block (frontmatter removed from the editable body) */
+.onyx-hidden-block {
+  height: 0;
+  overflow: hidden;
 }
 
 /* Hierarchical Context Metadata (HCM) "AI context" badge */

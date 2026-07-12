@@ -118,32 +118,6 @@ export class EmbedWidget extends WidgetType {
   }
 }
 
-export class PropertiesWidget extends WidgetType {
-  constructor(readonly entries: [string, string][]) {
-    super();
-  }
-  eq(o: PropertiesWidget) {
-    return JSON.stringify(o.entries) === JSON.stringify(this.entries);
-  }
-  toDOM() {
-    const el = document.createElement("div");
-    el.className = "onyx-props onyx-rendered";
-    for (const [k, v] of this.entries) {
-      const row = document.createElement("div");
-      row.className = "onyx-prop";
-      const key = document.createElement("span");
-      key.className = "onyx-prop-key";
-      key.textContent = k;
-      const val = document.createElement("span");
-      val.className = "onyx-prop-val";
-      val.textContent = v;
-      row.append(key, val);
-      el.appendChild(row);
-    }
-    return el;
-  }
-}
-
 /** A collapsed "AI context" badge standing in for a hidden `<!--ai … -->` HCM
  *  block. Clicking it places the cursor inside the block to reveal the source. */
 export class HcmBadgeWidget extends WidgetType {

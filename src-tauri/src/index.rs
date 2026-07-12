@@ -1432,6 +1432,28 @@ mod tests {
     }
 
     #[test]
+    fn frontmatter_type_and_parent_expose_in_pages() {
+        // Backs the categories/hierarchy feature: a note's `type:` and a
+        // quoted `parent: "[[X]]"` frontmatter must surface in Page.fields.
+        let conn = init_db(Path::new(":memory:")).unwrap();
+        index_note(
+            &conn,
+            "Projects/Aurora Web Dashboard.md",
+            "---\ntype: project\nparent: \"[[Project Aurora]]\"\n---\n# Aurora Web Dashboard\n",
+            0,
+        )
+        .unwrap();
+        let ps = pages(&conn, Path::new(".")).unwrap();
+        let p = ps.iter().find(|p| p.name == "Aurora Web Dashboard").unwrap();
+        assert_eq!(p.folder, "Projects");
+        assert_eq!(p.fields.get("type").and_then(|v| v.as_str()), Some("project"));
+        assert_eq!(
+            p.fields.get("parent").and_then(|v| v.as_str()),
+            Some("[[Project Aurora]]"),
+        );
+    }
+
+    #[test]
     fn parses_frontmatter_and_inline_fields() {
         let c = "---\nstatus: reading\nRating: 9\n---\nrating:: 8\nprose with a [due:: 2026-07-01] field";
         let fm = extract_frontmatter_fields(c);
