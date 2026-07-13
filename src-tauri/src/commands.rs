@@ -457,6 +457,23 @@ pub fn delete_note(state: State<AppState>, path: String) -> Result<(), String> {
     })
 }
 
+/// Recursively delete a folder and everything in it, then rebuild the index.
+#[tauri::command]
+pub fn delete_folder(state: State<AppState>, path: String) -> Result<(), String> {
+    let mut guard = state.vault.lock().unwrap();
+    let ctx = guard.as_mut().ok_or("No vault is open")?;
+    let abs = vault::resolve(&ctx.root, &path)?;
+    if !abs.is_dir() {
+        return Err("Not a folder".into());
+    }
+    std::fs::remove_dir_all(&abs).map_err(|e| e.to_string())?;
+    let prefix = format!("{}/", path.trim_matches('/'));
+    let _ = vector::delete_prefix(&ctx.conn, &prefix);
+    let root = ctx.root.clone();
+    index::reindex_all(&mut ctx.conn, &root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_backlinks(state: State<AppState>, name: String) -> Result<Vec<Backlink>, String> {
     with_vault(&state, |ctx| {

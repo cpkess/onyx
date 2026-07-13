@@ -19,7 +19,7 @@ import {
 import { api, noteName } from "../lib/api";
 import { useStore } from "../state/store";
 import { onyxExtensions, noteNamesFacet } from "./extensions";
-import { setActiveEditor, clearActiveEditor } from "./activeEditor";
+import { setActiveEditor, clearActiveEditor, isDeleted } from "./activeEditor";
 import { EditorToolbar } from "./EditorToolbar";
 import { queueIndex } from "../lib/autoindex";
 import { trackEvent } from "../features/night/track";
@@ -207,6 +207,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
     const scheduleSave = (content: string) => {
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(() => {
+        if (isDeleted(path)) return; // don't resurrect a deleted note
         api
           .writeNote(path, content)
           .then(() => {
@@ -337,7 +338,9 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
       window.clearTimeout(saveTimer.current);
       const view = viewRef.current;
       if (view) {
-        api.writeNote(path, view.state.doc.toString()).catch(() => {});
+        if (!isDeleted(path)) {
+          api.writeNote(path, view.state.doc.toString()).catch(() => {});
+        }
         clearActiveEditor(view);
         view.destroy();
         viewRef.current = null;

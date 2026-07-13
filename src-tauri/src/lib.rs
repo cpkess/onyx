@@ -44,6 +44,7 @@ pub fn run() {
             commands::move_path,
             commands::rename_path,
             commands::delete_note,
+            commands::delete_folder,
             commands::get_backlinks,
             commands::get_block_backlinks,
             commands::resolve_block_ref,

@@ -541,7 +541,7 @@ function cellHtml(v: unknown): string {
   return renderInline(String(v));
 }
 
-function renderDvResult(res: DvResult): string {
+export function renderDvResult(res: DvResult): string {
   if (res.kind === "error") return `<div class="onyx-dv-error">${escHtml(res.message)}</div>`;
 
   if (res.kind === "table") {

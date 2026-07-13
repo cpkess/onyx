@@ -1432,6 +1432,40 @@ mod tests {
     }
 
     #[test]
+    fn reindex_after_folder_removal_drops_its_notes() {
+        // Backs delete_folder: remove_dir_all + reindex_all leaves no index rows
+        // for the deleted folder's notes.
+        let root = std::env::temp_dir().join(format!(
+            "onyx_fold_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("Sub")).unwrap();
+        std::fs::write(root.join("keep.md"), "# Keep\n").unwrap();
+        std::fs::write(root.join("Sub").join("gone.md"), "# Gone\n[[keep]]").unwrap();
+
+        let mut conn = init_db(Path::new(":memory:")).unwrap();
+        reindex_all(&mut conn, &root).unwrap();
+        let count = |c: &Connection| {
+            c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get::<_, i64>(0)).unwrap()
+        };
+        assert_eq!(count(&conn), 2);
+
+        std::fs::remove_dir_all(root.join("Sub")).unwrap();
+        reindex_all(&mut conn, &root).unwrap();
+        assert_eq!(count(&conn), 1);
+        let path: String = conn
+            .query_row("SELECT path FROM notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(path, "keep.md");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn frontmatter_type_and_parent_expose_in_pages() {
         // Backs the categories/hierarchy feature: a note's `type:` and a
         // quoted `parent: "[[X]]"` frontmatter must surface in Page.fields.

@@ -1,3 +1,5 @@
+
+
 ---
 type: project
 ---
@@ -10,6 +12,11 @@ Next-gen analytics dashboard. This page mostly builds itself — the sections be
 pull from every note that links to Project Aurora, and from its sub-projects.
 
 ## Epics & sub-projects
+```dataview
+TABLE status
+WHERE parent = "Project Aurora"
+SORT file.name ASC
+```
 The `children` primitive lists notes whose `parent` points here.
 
 ```onyx-primitive

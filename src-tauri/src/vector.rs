@@ -88,6 +88,18 @@ pub fn delete_note(conn: &Connection, path: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Delete every chunk whose note path begins with `prefix` (folder removal).
+pub fn delete_prefix(conn: &Connection, prefix: &str) -> rusqlite::Result<()> {
+    if chunk_count(conn) == 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "DELETE FROM vec_chunks WHERE note_path LIKE ?1",
+        params![format!("{prefix}%")],
+    )?;
+    Ok(())
+}
+
 /// Insert a single embedded chunk.
 pub fn insert_chunk(
     conn: &Connection,

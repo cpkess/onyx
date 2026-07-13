@@ -43,6 +43,7 @@ function Tool({
  */
 export function EditorToolbar({ path }: { path: string }) {
   const mode = useStore((s) => s.noteModes[path] ?? s.settings.defaultMode);
+  const openDataviewBuilder = useStore((s) => s.setDataviewBuilderOpen);
   const show = useStore((s) => s.settings.showFormattingToolbar);
   if (mode === "reading" || !show) return null;
 
@@ -71,6 +72,7 @@ export function EditorToolbar({ path }: { path: string }) {
       {/* Insert */}
       <Tool label="🔗" title="Wikilink [[ ]]" onRun={() => insertSnippet("[[]]", 2)} />
       <Tool label="❝!" title="Callout" onRun={() => insertSnippet("> [!note] \n> ")} />
+      <Tool label="📊" title="Insert Dataview query…" onRun={() => openDataviewBuilder(true)} />
 
       <span className={DIV} />
 

@@ -9,6 +9,7 @@ import {
   substituteTemplate,
 } from "../settings";
 import { setHotkeyOverrides } from "../commands/registry";
+import { markDeleted, clearDeleted } from "../editor/activeEditor";
 import { dailyRelPath } from "../lib/daily";
 import { categoryById, newCategoryNoteBody } from "../lib/categories";
 import { invalidatePages } from "../dataview/pages";
@@ -24,6 +25,7 @@ import {
   openInPane,
   openToRight,
   removePathEverywhere,
+  removeSubtreeEverywhere,
   remapPaths,
   setActiveInPane,
   splitPane,
@@ -51,6 +53,7 @@ interface AppStore {
   bookmarks: string[];
   templatePickerOpen: boolean;
   datePickerOpen: boolean;
+  dataviewBuilderOpen: boolean;
   graphOpen: boolean;
   settingsOpen: boolean;
   sidebarOpen: boolean;
@@ -80,6 +83,8 @@ interface AppStore {
   movePath: (src: string, destDir: string) => Promise<void>;
   renamePath: (oldPath: string, newPath: string) => Promise<void>;
   deleteNote: (path: string) => Promise<void>;
+  deleteFolder: (path: string) => Promise<void>;
+  pruneRefs: (shouldRemove: (path: string) => boolean) => void;
   toggleTheme: () => void;
   setPaletteOpen: (open: boolean) => void;
   openPalette: (mode: PaletteMode) => void;
@@ -97,6 +102,7 @@ interface AppStore {
   ) => Promise<string | null>;
   setTemplatePickerOpen: (open: boolean) => void;
   setDatePickerOpen: (open: boolean) => void;
+  setDataviewBuilderOpen: (open: boolean) => void;
   setGraphOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setSidebarOpen: (open: boolean) => void;
@@ -168,6 +174,7 @@ export const useStore = create<AppStore>((set, get) => {
     bookmarks: [],
     templatePickerOpen: false,
     datePickerOpen: false,
+    dataviewBuilderOpen: false,
     graphOpen: false,
     settingsOpen: false,
     sidebarOpen: true,
@@ -261,6 +268,7 @@ export const useStore = create<AppStore>((set, get) => {
     },
 
     openNote: (path) => {
+      clearDeleted(path); // a note reopened at this path may save again
       commit(openInPane(ws(), get().activePaneId, path));
       pushRecent(path);
       trackEvent("OPEN_NOTE", path);
@@ -340,14 +348,48 @@ export const useStore = create<AppStore>((set, get) => {
 
     deleteNote: async (path) => {
       try {
+        // Mark deleted BEFORE closing the tab, so the unmounting editor's
+        // autosave/cleanup write doesn't recreate the file.
+        markDeleted([path]);
+        commit(removePathEverywhere(ws(), path));
         await api.deleteNote(path);
         trackEvent("DELETE_NOTE", path);
-        commit(removePathEverywhere(ws(), path));
+        get().pruneRefs((p) => p === path);
         await get().refreshTree();
+        invalidatePages();
       } catch (e) {
         console.error("delete failed", e);
         alert(`Could not delete: ${e}`);
       }
+    },
+
+    deleteFolder: async (path) => {
+      const folder = path.replace(/\/+$/, "");
+      try {
+        // Close + protect every open note under the folder before removal.
+        const open = ws().panes.flatMap((p) => p.tabs);
+        const under = open.filter((t) => t === folder || t.startsWith(folder + "/"));
+        markDeleted(under);
+        commit(removeSubtreeEverywhere(ws(), folder));
+        await api.deleteFolder(folder);
+        get().pruneRefs((p) => p === folder || p.startsWith(folder + "/"));
+        await get().refreshTree();
+        invalidatePages();
+      } catch (e) {
+        console.error("delete folder failed", e);
+        alert(`Could not delete folder: ${e}`);
+      }
+    },
+
+    pruneRefs: (shouldRemove) => {
+      const s = get();
+      const bookmarks = s.bookmarks.filter((p) => !shouldRemove(p));
+      const recent = s.recent.filter((p) => !shouldRemove(p));
+      const noteModes = Object.fromEntries(
+        Object.entries(s.noteModes).filter(([p]) => !shouldRemove(p))
+      );
+      set({ bookmarks, recent, noteModes });
+      api.writeVaultMeta("bookmarks.json", JSON.stringify(bookmarks)).catch(() => {});
     },
 
     toggleTheme: () => {
@@ -447,6 +489,7 @@ export const useStore = create<AppStore>((set, get) => {
 
     setTemplatePickerOpen: (open) => set({ templatePickerOpen: open }),
     setDatePickerOpen: (open) => set({ datePickerOpen: open }),
+    setDataviewBuilderOpen: (open) => set({ dataviewBuilderOpen: open }),
 
     setGraphOpen: (open) => set({ graphOpen: open }),
     setSettingsOpen: (open) => set({ settingsOpen: open }),

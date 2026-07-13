@@ -185,6 +185,7 @@ export function FileTree() {
   const movePath = useStore((s) => s.movePath);
   const renamePath = useStore((s) => s.renamePath);
   const deleteNote = useStore((s) => s.deleteNote);
+  const deleteFolder = useStore((s) => s.deleteFolder);
   const openNote = useStore((s) => s.openNote);
   const openNoteToRight = useStore((s) => s.openNoteToRight);
 
@@ -253,6 +254,15 @@ export function FileTree() {
           { label: "New folder", onClick: () => startCreate("folder", node.path) },
           { label: "Rename", onClick: () => beginRename(node) },
           { label: "Reveal in Finder", onClick: () => reveal(node.path) },
+          {
+            label: "Delete folder",
+            danger: true,
+            onClick: () => {
+              if (window.confirm(`Delete folder "${node.name}" and everything in it?`)) {
+                deleteFolder(node.path);
+              }
+            },
+          },
         ]
       : [
           { label: "Open", onClick: () => openNote(node.path) },

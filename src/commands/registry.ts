@@ -56,6 +56,7 @@ export const commands: Command[] = [
   { id: "journal-next-day", name: "Journal: next day", keys: "mod+alt+arrowright", run: () => shiftJournal(1) },
   { id: "journal-today", name: "Journal: go to today", run: () => void s().openDailyNote() },
   { id: "insert-template", name: "Insert template…", run: () => s().setTemplatePickerOpen(true) },
+  { id: "insert-dataview", name: "Insert Dataview query…", run: () => s().setDataviewBuilderOpen(true) },
   {
     id: "reindex-vault",
     name: "Reindex vault (rebuild links, blocks & references)",

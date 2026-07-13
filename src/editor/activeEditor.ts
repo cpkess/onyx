@@ -28,6 +28,21 @@ export function getActiveEditor(): EditorView | null {
   return active;
 }
 
+// Paths that were just deleted — the editor must NOT write these back on
+// autosave/unmount (which would resurrect the file). Cleared when a note is
+// (re)opened at the same path.
+const deletedPaths = new Set<string>();
+
+export function markDeleted(paths: string[]) {
+  for (const p of paths) deletedPaths.add(p);
+}
+export function clearDeleted(path: string) {
+  deletedPaths.delete(path);
+}
+export function isDeleted(path: string): boolean {
+  return deletedPaths.has(path);
+}
+
 /** Path of the note currently in the active editor, if known. */
 export function getActiveEditorPath(): string | null {
   return activePath;

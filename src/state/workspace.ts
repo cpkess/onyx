@@ -128,3 +128,13 @@ export function removePathEverywhere(ws: Workspace, path: string): Workspace {
   }
   return out;
 }
+
+/** Close every tab under a deleted folder (`prefix` itself or `prefix/...`). */
+export function removeSubtreeEverywhere(ws: Workspace, prefix: string): Workspace {
+  let out = ws;
+  const match = (t: string) => t === prefix || t.startsWith(prefix + "/");
+  for (const p of ws.panes) {
+    for (const t of p.tabs.filter(match)) out = closeInPane(out, p.id, t);
+  }
+  return out;
+}

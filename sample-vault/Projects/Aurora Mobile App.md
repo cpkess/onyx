@@ -1,6 +1,7 @@
 ---
 type: project
 parent: "[[Project Aurora]]"
+status: On Track
 ---
 
 # Aurora Mobile App

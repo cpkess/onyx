@@ -261,6 +261,7 @@ export const api = {
   writeVaultMeta: (name: string, content: string) =>
     invoke<void>("write_vault_meta", { name, content }),
   deleteNote: (path: string) => invoke<void>("delete_note", { path }),
+  deleteFolder: (path: string) => invoke<void>("delete_folder", { path }),
   getBacklinks: (name: string) => invoke<Backlink[]>("get_backlinks", { name }),
   getBlockBacklinks: (name: string) =>
     invoke<BlockRef[]>("get_block_backlinks", { name }),
