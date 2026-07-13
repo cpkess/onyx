@@ -115,6 +115,11 @@ function categorySource(cb: EditorCallbacks): CompletionSource {
       if (before.from > 0 && !/\s/.test(context.state.sliceDoc(before.from - 1, before.from))) {
         continue;
       }
+      // The completion range starts AFTER the trigger char, so CM filters the
+      // options by the typed name (not the `@`/`+`). `apply` still replaces from
+      // the trigger so the sugar char is removed on insert.
+      const triggerFrom = before.from;
+      const from = triggerFrom + cat.trigger.length;
       const typed = before.text.slice(cat.trigger.length).trim();
       const typedLower = typed.toLowerCase();
       const names = notesInCategory(getCachedPages(), cat)
@@ -123,20 +128,20 @@ function categorySource(cb: EditorCallbacks): CompletionSource {
       const options: Completion[] = names.map((n) => ({
         label: n,
         type: "text",
-        apply: (view: EditorView, _c: Completion, from: number, to: number) =>
-          insertWikilink(view, from, to, n),
+        apply: (view: EditorView, _c: Completion, _from: number, to: number) =>
+          insertWikilink(view, triggerFrom, to, n),
       }));
       if (typed && !names.some((n) => n.toLowerCase() === typedLower)) {
         options.push({
           label: `➕ Create "${typed}" as ${cat.name}`,
           type: "text",
-          apply: (view: EditorView, _c: Completion, from: number, to: number) => {
-            insertWikilink(view, from, to, typed);
+          apply: (view: EditorView, _c: Completion, _from: number, to: number) => {
+            insertWikilink(view, triggerFrom, to, typed);
             cb.createCategoryNote(cat.id, typed);
           },
         });
       }
-      return { from: before.from, options, validFor: re };
+      return { from, options, validFor: /^[\w .'-]*$/ };
     }
     return null;
   };

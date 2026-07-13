@@ -17,7 +17,7 @@ export function categoryById(id: string, cats: Category[]): Category | undefined
 
 /** Does a page belong to a category — by its folder (incl. nested) or `type:` field? */
 export function pageInCategory(page: Page, cat: Category): boolean {
-  const folder = cat.folder.trim().replace(/\/+$/, "");
+  const folder = (cat.folder ?? "").trim().replace(/\/+$/, "");
   if (folder && (page.folder === folder || page.folder.startsWith(folder + "/"))) {
     return true;
   }

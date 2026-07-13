@@ -19,6 +19,6 @@ Back to [[Welcome]] and the [[Knowledge Base]].
 - [ ] Selectable AI edit of text. Highlight section get A:B of changes
 - [x] Tauri Auto Updater using GitHub
 - [x] Move Change Vault into settings
-- [ ] 
+- [ ] [[Marcus]] [[Project Aurora]]
 
 #ui-enhancements
