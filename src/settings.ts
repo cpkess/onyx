@@ -24,6 +24,7 @@ export interface Settings {
   weekStart: 0 | 1; // calendar week start: 0 = Sunday, 1 = Monday
   templatesFolder: string;
   outliner: boolean; // Logseq-style block outliner keys (Tab/Enter/fold)
+  spellcheck: boolean; // native (macOS) spell check squiggles in the editor
   categories: Category[]; // typed note categories (People, Projects, …)
   hotkeys: Record<string, string>; // commandId -> combo override
 }
@@ -43,6 +44,7 @@ export const defaultSettings: Settings = {
   weekStart: 0,
   templatesFolder: "templates",
   outliner: true,
+  spellcheck: true,
   categories: [
     { id: "person", name: "Person", folder: "People", trigger: "@", template: "" },
     { id: "project", name: "Project", folder: "Projects", trigger: "+", template: "" },

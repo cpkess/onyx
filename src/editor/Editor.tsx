@@ -51,6 +51,16 @@ function modeExtensions(mode: EditorMode) {
   return [editorModeFacet.of(mode), EditorView.editable.of(mode !== "reading")];
 }
 
+// Native (macOS WKWebView) spell check. Squiggles + right-click suggestions only —
+// autocorrect/autocapitalize stay off so Markdown, code, and [[wikilinks]] aren't rewritten.
+function spellcheckExtensions(on: boolean) {
+  return EditorView.contentAttributes.of({
+    spellcheck: on ? "true" : "false",
+    autocorrect: "off",
+    autocapitalize: "off",
+  });
+}
+
 function countStats(text: string) {
   const words = (text.match(/\S+/g) ?? []).length;
   return { words, chars: text.length };
@@ -111,6 +121,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
   const namesCompartment = useRef(new Compartment());
   const modeCompartment = useRef(new Compartment());
   const outlinerCompartment = useRef(new Compartment());
+  const spellcheckCompartment = useRef(new Compartment());
   const namesRef = useRef<string[]>([]);
   const saveTimer = useRef<number | undefined>(undefined);
 
@@ -120,6 +131,7 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
   const tree = useStore((s) => s.tree);
   const mode = useStore((s) => s.noteModes[path] ?? s.settings.defaultMode);
   const outliner = useStore((s) => s.settings.outliner);
+  const spellcheck = useStore((s) => s.settings.spellcheck ?? true);
   const settings = useStore((s) => s.settings);
   const openDailyNote = useStore((s) => s.openDailyNote);
   const journalDate = parseDailyDate(path, settings);
@@ -165,6 +177,16 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
       });
     }
   }, [outliner]);
+
+  // Toggle native spell check on open notes without reopening them.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) {
+      view.dispatch({
+        effects: spellcheckCompartment.current.reconfigure(spellcheckExtensions(spellcheck)),
+      });
+    }
+  }, [spellcheck]);
 
   useEffect(() => {
     let disposed = false;
@@ -284,6 +306,9 @@ export function Editor({ path, paneId }: { path: string; paneId?: string }) {
             },
           }),
           modeCompartment.current.of(modeExtensions(initialMode)),
+          spellcheckCompartment.current.of(
+            spellcheckExtensions(useStore.getState().settings.spellcheck ?? true)
+          ),
           namesCompartment.current.of(
             noteNamesFacet.of(new Set(namesRef.current.map((n) => n.toLowerCase())))
           ),

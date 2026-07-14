@@ -173,6 +173,11 @@ function Editor() {
           checked={settings.outliner}
           onChange={(v) => setSettings({ outliner: v })}
         />
+        <Checkbox
+          label="Spell check (underline misspelled words; right-click for native suggestions)"
+          checked={settings.spellcheck}
+          onChange={(v) => setSettings({ spellcheck: v })}
+        />
       </div>
     </Row>
   );
