@@ -8,6 +8,34 @@ export function parentName(page: Page): string | null {
   return m ? m[1].split("|")[0].split("#")[0].trim() : null;
 }
 
+/** Lowercased note name → page, for resolving `parent` links by name. */
+export function pagesByName(pages: Page[]): Map<string, Page> {
+  const m = new Map<string, Page>();
+  for (const p of pages) m.set(p.name.toLowerCase(), p);
+  return m;
+}
+
+/**
+ * The chain of ancestor notes for `page`, ordered root → … → parent (empty when
+ * it has no resolvable parent). Walks the `parent` field upward via `byName`,
+ * cycle-guarded against malformed `parent::` loops.
+ */
+export function ancestorNames(page: Page, byName: Map<string, Page>): string[] {
+  const chain: string[] = [];
+  const seen = new Set<string>([page.path]);
+  let cur: Page | undefined = page;
+  for (;;) {
+    const pn = parentName(cur);
+    if (!pn) break;
+    const parent = byName.get(pn.toLowerCase());
+    if (!parent || seen.has(parent.path)) break;
+    seen.add(parent.path);
+    chain.push(parent.name);
+    cur = parent;
+  }
+  return chain.reverse();
+}
+
 export interface Hierarchy {
   /** parent note path → its child notes (as file TreeNodes), sorted by name. */
   childrenOf: Map<string, TreeNode[]>;

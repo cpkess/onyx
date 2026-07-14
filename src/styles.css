@@ -53,6 +53,28 @@ body {
   outline: none;
 }
 
+/* Link autocomplete: show each note's parent chain as a dim breadcrumb. */
+.cm-tooltip-autocomplete > ul {
+  max-width: min(34rem, 80vw);
+}
+.cm-tooltip-autocomplete > ul > li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75em;
+}
+.cm-tooltip-autocomplete .cm-completionLabel {
+  flex: 0 1 auto;
+}
+.cm-tooltip-autocomplete .cm-completionDetail {
+  margin-left: auto;
+  font-style: normal;
+  font-size: 0.85em;
+  color: color-mix(in srgb, currentColor 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- Live-preview decoration styles ---- */
 .tok-h1 {
   font-size: 1.9em;

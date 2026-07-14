@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHierarchy, isDescendant, parentName } from "./hierarchy";
+import { ancestorNames, buildHierarchy, isDescendant, pagesByName, parentName } from "./hierarchy";
 import type { Page } from "./api";
 
 function page(over: Partial<Page>): Page {
@@ -88,5 +88,46 @@ describe("isDescendant", () => {
   it("blocks a reparent that would form a cycle (drop A onto C)", () => {
     // Making A a child of its own descendant C must be rejected.
     expect(isDescendant(h, "A.md", "C.md")).toBe(true);
+  });
+});
+
+describe("ancestorNames", () => {
+  // Root ─ Project Aurora ─ Aurora Web, plus a same-named "Aurora Web" under Nimbus.
+  const pages = [
+    page({ name: "Root", path: "Root.md" }),
+    page({ name: "Project Aurora", path: "Projects/Project Aurora.md", fields: { parent: "[[Root]]" } }),
+    page({ name: "Aurora Web", path: "Projects/Aurora Web.md", fields: { parent: "[[Project Aurora]]" } }),
+    page({ name: "Nimbus", path: "Clients/Nimbus.md" }),
+    page({ name: "Aurora Web", path: "Clients/Aurora Web.md", fields: { parent: "[[Nimbus]]" } }),
+    page({ name: "Loose", path: "Loose.md" }),
+  ];
+  const byName = pagesByName(pages);
+
+  it("returns the chain root → parent (leaf excluded)", () => {
+    const web = pages[2];
+    expect(ancestorNames(web, byName)).toEqual(["Root", "Project Aurora"]);
+  });
+
+  it("gives same-named notes distinct chains", () => {
+    const nimbusWeb = pages[4];
+    expect(ancestorNames(nimbusWeb, byName)).toEqual(["Nimbus"]);
+  });
+
+  it("is empty for a note with no parent", () => {
+    expect(ancestorNames(pages[5], byName)).toEqual([]);
+  });
+
+  it("stops at a parent that doesn't resolve", () => {
+    const orphan = page({ name: "Orphan", path: "Orphan.md", fields: { parent: "[[Ghost]]" } });
+    expect(ancestorNames(orphan, pagesByName([orphan]))).toEqual([]);
+  });
+
+  it("terminates on a cycle (A ↔ B)", () => {
+    const cyc = [
+      page({ name: "A", path: "A.md", fields: { parent: "[[B]]" } }),
+      page({ name: "B", path: "B.md", fields: { parent: "[[A]]" } }),
+    ];
+    const m = pagesByName(cyc);
+    expect(ancestorNames(cyc[0], m)).toEqual(["B"]); // one hop, then cycle guard stops
   });
 });

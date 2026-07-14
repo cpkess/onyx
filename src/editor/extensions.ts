@@ -12,7 +12,8 @@ import {
 import { renderEngine, noteNamesFacet, type RenderCallbacks } from "./render/core";
 import { nodeRules, regexRules } from "./render/rules";
 import { getCachedPages } from "../dataview/pages";
-import { escapeRegExp, notesInCategory } from "../lib/categories";
+import { escapeRegExp, pageInCategory } from "../lib/categories";
+import { pagesByName, ancestorNames } from "../lib/hierarchy";
 import type { Category } from "../settings";
 
 export { noteNamesFacet };
@@ -62,30 +63,42 @@ function clickHandler(cb: EditorCallbacks): Extension {
   });
 }
 
-/** Autocomplete source for `[[` wikilinks. */
+// Only add the closing `]]` if closeBrackets hasn't already inserted one
+// (otherwise we'd produce `[[name]]]]`). Cursor lands after the brackets.
+function applyWikiName(name: string) {
+  return (view: EditorView, _c: Completion, from: number, to: number) => {
+    const hasClose = view.state.sliceDoc(to, to + 2) === "]]";
+    view.dispatch({
+      changes: { from, to, insert: hasClose ? name : `${name}]]` },
+      selection: { anchor: from + name.length + 2 },
+    });
+  };
+}
+
+/** Autocomplete source for `[[` wikilinks, annotated with each note's parent chain. */
 function wikilinkSource(cb: EditorCallbacks): CompletionSource {
   return (context: CompletionContext): CompletionResult | null => {
     const before = context.matchBefore(/\[\[([^\]\n]*)$/);
     if (!before) return null;
     const typed = before.text.slice(2).toLowerCase();
-    const options = cb
-      .getNoteNames()
-      .filter((n) => n.toLowerCase().includes(typed))
-      .slice(0, 50)
-      .map((n) => ({
-        label: n,
-        type: "text",
-        // Only add the closing `]]` if closeBrackets hasn't already inserted one
-        // (otherwise we'd produce `[[name]]]]`). Cursor lands after the brackets.
-        apply: (view: EditorView, _c: Completion, from: number, to: number) => {
-          const hasClose = view.state.sliceDoc(to, to + 2) === "]]";
-          view.dispatch({
-            changes: { from, to, insert: hasClose ? n : `${n}]]` },
-            selection: { anchor: from + n.length + 2 },
-          });
-        },
-      }));
-    return { from: before.from + 2, options, validFor: /^[^\]\n]*$/ };
+    const pages = getCachedPages();
+    const byName = pagesByName(pages);
+    // One option per note (NOT deduped by name), so same-named notes appear
+    // separately, each labeled with its parent chain.
+    const options: Completion[] = [];
+    for (const p of pages) {
+      if (typed && !p.name.toLowerCase().includes(typed)) continue;
+      const chain = ancestorNames(p, byName).join(" › ");
+      options.push({ label: p.name, type: "text", ...(chain ? { detail: chain } : {}), apply: applyWikiName(p.name) });
+    }
+    // Preserve alias completions: names from getNoteNames() with no page stem.
+    const stems = new Set(pages.map((p) => p.name.toLowerCase()));
+    for (const n of cb.getNoteNames()) {
+      const nl = n.toLowerCase();
+      if (stems.has(nl) || (typed && !nl.includes(typed))) continue;
+      options.push({ label: n, type: "text", apply: applyWikiName(n) });
+    }
+    return { from: before.from + 2, options: options.slice(0, 50), validFor: /^[^\]\n]*$/ };
   };
 }
 
@@ -122,16 +135,23 @@ function categorySource(cb: EditorCallbacks): CompletionSource {
       const from = triggerFrom + cat.trigger.length;
       const typed = before.text.slice(cat.trigger.length).trim();
       const typedLower = typed.toLowerCase();
-      const names = notesInCategory(getCachedPages(), cat)
-        .filter((n) => !typedLower || n.toLowerCase().includes(typedLower))
-        .slice(0, 50);
-      const options: Completion[] = names.map((n) => ({
-        label: n,
-        type: "text",
-        apply: (view: EditorView, _c: Completion, _from: number, to: number) =>
-          insertWikilink(view, triggerFrom, to, n),
-      }));
-      if (typed && !names.some((n) => n.toLowerCase() === typedLower)) {
+      const pages = getCachedPages();
+      const byName = pagesByName(pages);
+      const matches = pages.filter(
+        (p) => pageInCategory(p, cat) && (!typedLower || p.name.toLowerCase().includes(typedLower))
+      );
+      const exists = matches.some((p) => p.name.toLowerCase() === typedLower);
+      const options: Completion[] = matches.slice(0, 50).map((p) => {
+        const chain = ancestorNames(p, byName).join(" › ");
+        return {
+          label: p.name,
+          type: "text",
+          ...(chain ? { detail: chain } : {}),
+          apply: (view: EditorView, _c: Completion, _from: number, to: number) =>
+            insertWikilink(view, triggerFrom, to, p.name),
+        };
+      });
+      if (typed && !exists) {
         options.push({
           label: `➕ Create "${typed}" as ${cat.name}`,
           type: "text",
