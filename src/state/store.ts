@@ -9,7 +9,8 @@ import {
   substituteTemplate,
 } from "../settings";
 import { setHotkeyOverrides } from "../commands/registry";
-import { markDeleted, clearDeleted } from "../editor/activeEditor";
+import { markDeleted, clearDeleted, updateFrontmatterField } from "../editor/activeEditor";
+import { parseFrontmatter, applyFrontmatter, upsertProp } from "../lib/frontmatter";
 import { dailyRelPath } from "../lib/daily";
 import { categoryById, newCategoryNoteBody } from "../lib/categories";
 import { invalidatePages } from "../dataview/pages";
@@ -82,6 +83,8 @@ interface AppStore {
   createFolder: (path: string) => Promise<void>;
   movePath: (src: string, destDir: string) => Promise<void>;
   renamePath: (oldPath: string, newPath: string) => Promise<void>;
+  /** Set (or clear, with null) a note's `parent` frontmatter field by parent name. */
+  setParent: (childPath: string, parentName: string | null) => Promise<void>;
   deleteNote: (path: string) => Promise<void>;
   deleteFolder: (path: string) => Promise<void>;
   pruneRefs: (shouldRemove: (path: string) => boolean) => void;
@@ -343,6 +346,26 @@ export const useStore = create<AppStore>((set, get) => {
       } catch (e) {
         console.error("rename failed", e);
         alert(`Could not rename: ${e}`);
+      }
+    },
+
+    setParent: async (childPath, parentName) => {
+      // `[[Name]]` wikilink value (auto-quoted by serializeFrontmatter), or null to clear.
+      const value = parentName ? `[[${parentName}]]` : null;
+      try {
+        // Prefer the live buffer when the child is the active editor, so an
+        // in-flight autosave can't clobber the change (same as the Properties
+        // panel). Otherwise read-modify-write the file on disk.
+        if (!updateFrontmatterField(childPath, "parent", value)) {
+          const content = await api.readNote(childPath);
+          const next = upsertProp(parseFrontmatter(content).props, "parent", value);
+          await api.writeNote(childPath, applyFrontmatter(content, next));
+          await get().refreshTree();
+          invalidatePages();
+        }
+      } catch (e) {
+        console.error("setParent failed", e);
+        alert(`Could not set parent: ${e}`);
       }
     },
 

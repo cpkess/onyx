@@ -1,3 +1,7 @@
+---
+parent: "[[Markdown Showcase]]"
+---
+
 # Nimbus Field Notes
 
 Loose notes on [[Project Nimbus]] that also show **block references**.

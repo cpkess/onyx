@@ -1,14 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import type { TreeNode } from "../lib/api";
+import { noteName, type TreeNode } from "../lib/api";
 import { useStore } from "../state/store";
 import { ContextMenu, type MenuState } from "./ContextMenu";
 import { pickAndImport, onImportProgress, type ImportProgress } from "../lib/importDoc";
 import { getCachedPages, ensurePages, onPagesChanged } from "../dataview/pages";
-import { buildHierarchy, type Hierarchy } from "../lib/hierarchy";
+import { buildHierarchy, isDescendant, type Hierarchy } from "../lib/hierarchy";
 
-// The path currently being dragged (module-level: survives across TreeItems).
+// The item currently being dragged (module-level: survives across TreeItems).
 let draggedPath: string | null = null;
+let draggedIsDir = false;
 
 function parentDir(path: string): string {
   const i = path.lastIndexOf("/");
@@ -23,6 +24,18 @@ function canDrop(destDir: string): boolean {
   if (destDir === src) return false;
   if (destDir.startsWith(src + "/")) return false;
   if (parentDir(src) === destDir) return false;
+  return true;
+}
+
+// Whether the dragged note can become a child of the note at `targetPath`.
+// Only notes (not folders) can be reparented; reject self, a no-op re-drop onto
+// the current parent, and any drop that would create a parent cycle.
+function canReparentOnto(targetPath: string, hier: Hierarchy): boolean {
+  const src = draggedPath;
+  if (src == null || draggedIsDir) return false;
+  if (targetPath === src) return false;
+  if ((hier.childrenOf.get(targetPath) ?? []).some((c) => c.path === src)) return false;
+  if (isDescendant(hier, src, targetPath)) return false;
   return true;
 }
 
@@ -56,30 +69,36 @@ function TreeItem({
   const openNote = useStore((s) => s.openNote);
   const activeTab = useStore((s) => s.activeTab);
   const movePath = useStore((s) => s.movePath);
+  const setParent = useStore((s) => s.setParent);
   const pad = { paddingLeft: `${depth * 12 + 8}px` };
-  const destDir = node.is_dir ? node.path : parentDir(node.path);
+  // Folder targets accept a physical move; note targets accept a reparent.
+  const dropAllowed = () =>
+    node.is_dir ? canDrop(node.path) : canReparentOnto(node.path, ctx.hier);
 
   const onDragStart = (e: React.DragEvent) => {
     draggedPath = node.path;
-    e.dataTransfer.effectAllowed = "move";
+    draggedIsDir = node.is_dir;
+    e.dataTransfer.effectAllowed = "all";
     e.dataTransfer.setData("text/plain", node.path);
   };
   const onDragOver = (e: React.DragEvent) => {
-    if (canDrop(destDir)) {
+    if (dropAllowed()) {
       e.preventDefault();
       e.stopPropagation();
-      e.dataTransfer.dropEffect = "move";
+      e.dataTransfer.dropEffect = node.is_dir ? "move" : "link";
       setDragOver(true);
     }
   };
   const onDrop = (e: React.DragEvent) => {
-    if (!canDrop(destDir)) return;
+    if (!dropAllowed()) return;
     e.preventDefault();
     e.stopPropagation();
     setDragOver(false);
     const src = draggedPath;
     draggedPath = null;
-    if (src) movePath(src, destDir);
+    if (!src) return;
+    if (node.is_dir) movePath(src, node.path);
+    else setParent(src, noteName(node.path));
   };
   const dropRing = dragOver
     ? "ring-1 ring-inset ring-[var(--onyx-accent)] bg-[var(--onyx-accent)]/10"
@@ -184,6 +203,7 @@ export function FileTree() {
   const createFolder = useStore((s) => s.createFolder);
   const movePath = useStore((s) => s.movePath);
   const renamePath = useStore((s) => s.renamePath);
+  const setParent = useStore((s) => s.setParent);
   const deleteNote = useStore((s) => s.deleteNote);
   const deleteFolder = useStore((s) => s.deleteFolder);
   const openNote = useStore((s) => s.openNote);
@@ -268,6 +288,9 @@ export function FileTree() {
           { label: "Open", onClick: () => openNote(node.path) },
           { label: "Open in right panel", onClick: () => openNoteToRight(node.path) },
           { label: "Rename", onClick: () => beginRename(node) },
+          ...(hier.relocated.has(node.path)
+            ? [{ label: "Remove from parent", onClick: () => setParent(node.path, null) }]
+            : []),
           { label: "Reveal in Finder", onClick: () => reveal(node.path) },
           {
             label: "Delete",

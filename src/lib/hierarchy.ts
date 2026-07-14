@@ -48,3 +48,23 @@ export function buildHierarchy(pages: Page[]): Hierarchy {
   for (const arr of childrenOf.values()) arr.sort((a, b) => a.name.localeCompare(b.name));
   return { childrenOf, relocated };
 }
+
+/**
+ * Whether `nodePath` sits anywhere in the subtree under `ancestorPath` (walking
+ * `childrenOf`). Used to reject a reparent that would create a cycle — you can't
+ * make a note a child of one of its own descendants. Guards against malformed
+ * cyclic data via a visited set.
+ */
+export function isDescendant(hier: Hierarchy, ancestorPath: string, nodePath: string): boolean {
+  const stack = [...(hier.childrenOf.get(ancestorPath) ?? [])];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (n.path === nodePath) return true;
+    if (seen.has(n.path)) continue;
+    seen.add(n.path);
+    const kids = hier.childrenOf.get(n.path);
+    if (kids) stack.push(...kids);
+  }
+  return false;
+}

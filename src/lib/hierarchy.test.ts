@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildHierarchy, parentName } from "./hierarchy";
+import { buildHierarchy, isDescendant, parentName } from "./hierarchy";
 import type { Page } from "./api";
 
 function page(over: Partial<Page>): Page {
@@ -61,5 +61,32 @@ describe("buildHierarchy", () => {
   it("ignores a self-parent", () => {
     const h = buildHierarchy([page({ name: "Self", path: "Self.md", fields: { parent: "[[Self]]" } })]);
     expect(h.relocated.size).toBe(0);
+  });
+});
+
+describe("isDescendant", () => {
+  // A ─ B ─ C  (C's parent is B, B's parent is A)
+  const h = buildHierarchy([
+    page({ name: "A", path: "A.md" }),
+    page({ name: "B", path: "B.md", fields: { parent: "[[A]]" } }),
+    page({ name: "C", path: "C.md", fields: { parent: "[[B]]" } }),
+    page({ name: "Other", path: "Other.md" }),
+  ]);
+
+  it("finds direct and transitive descendants", () => {
+    expect(isDescendant(h, "A.md", "B.md")).toBe(true);
+    expect(isDescendant(h, "A.md", "C.md")).toBe(true); // transitive
+    expect(isDescendant(h, "B.md", "C.md")).toBe(true);
+  });
+
+  it("is false for non-descendants, self, and unrelated notes", () => {
+    expect(isDescendant(h, "C.md", "A.md")).toBe(false); // upward
+    expect(isDescendant(h, "A.md", "A.md")).toBe(false); // self
+    expect(isDescendant(h, "A.md", "Other.md")).toBe(false);
+  });
+
+  it("blocks a reparent that would form a cycle (drop A onto C)", () => {
+    // Making A a child of its own descendant C must be rejected.
+    expect(isDescendant(h, "A.md", "C.md")).toBe(true);
   });
 });

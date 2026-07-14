@@ -31,6 +31,19 @@ export function parseFrontmatter(content: string): ParsedFrontmatter {
   return { props, end: m[0].length, has: true };
 }
 
+/**
+ * Return a new props list with `key` set to `value`: replaces the existing row
+ * (in place, preserving order), appends if absent, or removes the row when
+ * `value` is `null`. Used to set/clear single fields like `parent`.
+ */
+export function upsertProp(props: Prop[], key: string, value: string | null): Prop[] {
+  if (value === null) return props.filter((p) => p.key !== key);
+  if (props.some((p) => p.key === key)) {
+    return props.map((p) => (p.key === key ? { key, value } : p));
+  }
+  return [...props, { key, value }];
+}
+
 function stripQuotes(s: string): string {
   const t = s.trim();
   if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {

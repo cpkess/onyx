@@ -1,5 +1,5 @@
 import { EditorView } from "@codemirror/view";
-import { applyFrontmatter, type Prop } from "../lib/frontmatter";
+import { applyFrontmatter, parseFrontmatter, upsertProp, type Prop } from "../lib/frontmatter";
 
 /**
  * Tracks the currently focused note editor so AI panels can insert text into
@@ -84,6 +84,19 @@ export function setFrontmatter(path: string, props: Prop[]): boolean {
     changes: { from: 0, to: content.length - suf, insert: next.slice(0, next.length - suf) },
   });
   return true;
+}
+
+/**
+ * Set (or clear, with `null`) a single frontmatter field on the note in the
+ * active editor (if it's showing `path`), upserting into the live buffer's
+ * existing frontmatter. Returns true if applied (else the caller should write
+ * the file on disk). Used for sidebar drag-to-reparent.
+ */
+export function updateFrontmatterField(path: string, key: string, value: string | null): boolean {
+  if (!active || activePath !== path) return false;
+  const content = active.state.doc.toString();
+  const next = upsertProp(parseFrontmatter(content).props, key, value);
+  return setFrontmatter(path, next);
 }
 
 /** Scroll the active editor to a heading by its text. */

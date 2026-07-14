@@ -3,6 +3,7 @@ import {
   parseFrontmatter,
   serializeFrontmatter,
   applyFrontmatter,
+  upsertProp,
   type Prop,
 } from "./frontmatter";
 
@@ -68,5 +69,49 @@ describe("applyFrontmatter", () => {
   it("prepends a block when the note has none", () => {
     const out = applyFrontmatter("# Hello\n", [{ key: "type", value: "person" }]);
     expect(out).toBe("---\ntype: person\n---\n\n# Hello\n");
+  });
+});
+
+describe("upsertProp", () => {
+  const base: Prop[] = [
+    { key: "type", value: "project" },
+    { key: "status", value: "active" },
+  ];
+
+  it("appends a new key at the end", () => {
+    expect(upsertProp(base, "parent", "[[Aurora]]")).toEqual([
+      { key: "type", value: "project" },
+      { key: "status", value: "active" },
+      { key: "parent", value: "[[Aurora]]" },
+    ]);
+  });
+
+  it("replaces an existing key in place (order preserved)", () => {
+    const withParent: Prop[] = [
+      { key: "type", value: "project" },
+      { key: "parent", value: "[[Old]]" },
+      { key: "status", value: "active" },
+    ];
+    expect(upsertProp(withParent, "parent", "[[New]]")).toEqual([
+      { key: "type", value: "project" },
+      { key: "parent", value: "[[New]]" },
+      { key: "status", value: "active" },
+    ]);
+  });
+
+  it("removes the key when value is null", () => {
+    const withParent: Prop[] = [...base, { key: "parent", value: "[[Aurora]]" }];
+    expect(upsertProp(withParent, "parent", null)).toEqual(base);
+  });
+
+  it("does not mutate the input array", () => {
+    const copy = [...base];
+    upsertProp(base, "parent", "[[Aurora]]");
+    expect(base).toEqual(copy);
+  });
+
+  it("serializes a set parent as a quoted wikilink", () => {
+    const next = upsertProp([], "parent", "[[Project Aurora]]");
+    expect(serializeFrontmatter(next)).toBe('---\nparent: "[[Project Aurora]]"\n---\n');
   });
 });

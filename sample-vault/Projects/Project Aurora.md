@@ -12,6 +12,7 @@ Next-gen analytics dashboard. This page mostly builds itself — the sections be
 pull from every note that links to Project Aurora, and from its sub-projects.
 
 ## Epics & sub-projects
+
 ```dataview
 TABLE status
 WHERE parent = "Project Aurora"
