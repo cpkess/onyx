@@ -1,10 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useStore } from "../state/store";
 import { api, noteName, type TreeNode } from "../lib/api";
 import { getCachedPages, ensurePages, onPagesChanged } from "../dataview/pages";
 import { runDql } from "../dataview/engine";
 import { renderDvResult } from "../editor/render/widgets";
 import { buildDql, type DvType, type QuerySpec, type SourceKind } from "../dataview/build";
+import {
+  BADGE_COLOR_NAMES,
+  badgeColorHex,
+  serializeBadgeFormat,
+  type BadgeFormat,
+} from "../dataview/badges";
 import { insertText } from "../editor/activeEditor";
 
 const TYPES: DvType[] = ["TABLE", "LIST", "TASK", "CALENDAR"];
@@ -76,14 +82,26 @@ export function DataviewBuilder() {
     limit: limit ? Number(limit) : undefined,
   };
   const dql = buildDql(spec);
+
+  // Per-table badge config, keyed by the column's header (or expr when unnamed).
+  const format: BadgeFormat = {};
+  for (const c of columns) {
+    const rules = (c.badges ?? []).filter((b) => b.value.trim());
+    if (rules.length) {
+      const key = (c.header?.trim() || c.expr).trim().toLowerCase();
+      if (key) format[key] = rules;
+    }
+  }
+  const formatLine = serializeBadgeFormat(format);
+
   const previewHtml = useMemo(() => {
     try {
-      return renderDvResult(runDql(dql, getCachedPages(), activeTab));
+      return renderDvResult(runDql(dql, getCachedPages(), activeTab), format);
     } catch (e) {
       return `<div class="onyx-dv-error">${String(e)}</div>`;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dql, pv]);
+  }, [dql, pv, formatLine]);
 
   if (!open) return null;
 
@@ -95,9 +113,16 @@ export function DataviewBuilder() {
   const setCol = (i: number, patch: Partial<QuerySpec["columns"][number]>) =>
     setColumns((c) => c.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const rmCol = (i: number) => setColumns((c) => c.filter((_, j) => j !== i));
+  const mapCol = (ci: number, fn: (badges: NonNullable<QuerySpec["columns"][number]["badges"]>) => QuerySpec["columns"][number]["badges"]) =>
+    setColumns((c) => c.map((r, j) => (j === ci ? { ...r, badges: fn(r.badges ?? []) } : r)));
+  const addBadge = (ci: number) => mapCol(ci, (b) => [...b, { value: "", color: "green" }]);
+  const setBadge = (ci: number, bi: number, patch: Partial<{ value: string; color: string }>) =>
+    mapCol(ci, (b) => b.map((r, k) => (k === bi ? { ...r, ...patch } : r)));
+  const rmBadge = (ci: number, bi: number) => mapCol(ci, (b) => b.filter((_, k) => k !== bi));
 
   const insert = () => {
-    insertText("\n```dataview\n" + dql + "\n```\n");
+    const body = formatLine ? dql + "\n" + formatLine : dql;
+    insertText("\n```dataview\n" + body + "\n```\n");
     setOpen(false);
   };
 
@@ -172,12 +197,32 @@ export function DataviewBuilder() {
           <div className="mt-3">
             <label className={label}>Columns</label>
             {columns.map((c, i) => (
-              <div key={i} className="mb-1 flex items-center gap-1">
-                <select className={`${field} w-40`} value={c.expr} onChange={(e) => setCol(i, { expr: e.target.value })}>
-                  {fieldOptions}
-                </select>
-                <input className={`${field} min-w-0 flex-1`} placeholder="header (optional)" value={c.header ?? ""} onChange={(e) => setCol(i, { header: e.target.value })} />
-                <button className="px-1 text-neutral-400 hover:text-neutral-700" onClick={() => rmCol(i)}>✕</button>
+              <div key={i} className="mb-1">
+                <div className="flex items-center gap-1">
+                  <select className={`${field} w-40`} value={c.expr} onChange={(e) => setCol(i, { expr: e.target.value })}>
+                    {fieldOptions}
+                  </select>
+                  <input className={`${field} min-w-0 flex-1`} placeholder="header (optional)" value={c.header ?? ""} onChange={(e) => setCol(i, { header: e.target.value })} />
+                  <button title="Add a conditional badge rule for this column" className="px-1 text-neutral-400 hover:text-[var(--onyx-accent)]" onClick={() => addBadge(i)}>🎨</button>
+                  <button className="px-1 text-neutral-400 hover:text-neutral-700" onClick={() => rmCol(i)}>✕</button>
+                </div>
+                {(c.badges?.length ?? 0) > 0 && (
+                  <div className="ml-4 mt-1 space-y-1 border-l border-black/10 pl-2 dark:border-white/10">
+                    {c.badges!.map((b, bi) => (
+                      <div key={bi} className="flex items-center gap-1">
+                        <span className="text-xs text-neutral-400">value =</span>
+                        <input className={`${field} w-32`} placeholder="e.g. Done" value={b.value} onChange={(e) => setBadge(i, bi, { value: e.target.value })} />
+                        <select className={field} value={b.color} onChange={(e) => setBadge(i, bi, { color: e.target.value })}>
+                          {BADGE_COLOR_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                        <span className="onyx-dv-badge" style={{ "--dv-badge": badgeColorHex(b.color) } as CSSProperties}>
+                          {b.value || "preview"}
+                        </span>
+                        <button className="px-1 text-neutral-400 hover:text-neutral-700" onClick={() => rmBadge(i, bi)}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             <button className="mt-1 text-xs text-neutral-500 hover:text-[var(--onyx-accent)]" onClick={addCol}>＋ Add column</button>

@@ -1,6 +1,7 @@
 ---
 type: project
 parent: "[[Project Aurora]]"
+status: Complete
 ---
 
 # Aurora Web Dashboard

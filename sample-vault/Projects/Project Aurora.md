@@ -1,4 +1,10 @@
 
+```dataview
+TABLE status
+WHERE parent = "Project Aurora"
+%% onyx-badges: {"status":[{"value":"On Track","color":"green"},{"value":"At Risk","color":"amber"},{"value":"Help Needed","color":"red"},{"value":"Complete","color":"blue"}]} %%
+```
+
 
 ---
 type: project

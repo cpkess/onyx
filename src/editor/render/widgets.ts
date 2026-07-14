@@ -7,6 +7,7 @@ import { api, noteName, type BlockRef } from "../../lib/api";
 import { runDql, runInline, toText, type DvResult } from "../../dataview/engine";
 import { DvLink } from "../../dataview/value";
 import { getCachedPages, invalidatePages } from "../../dataview/pages";
+import { matchBadge, splitDataviewSource, type BadgeFormat } from "../../dataview/badges";
 import {
   getCachedBlockRefs,
   invalidateBlockRefs,
@@ -527,13 +528,17 @@ function escHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function cellHtml(v: unknown): string {
+function cellHtml(v: unknown, header?: string, format?: BadgeFormat | null): string {
   if (v == null) return "";
+  if (typeof v === "string") {
+    const color = matchBadge(format, header, v);
+    if (color) return `<span class="onyx-dv-badge" style="--dv-badge:${color}">${escHtml(v)}</span>`;
+  }
   if (v instanceof DvLink) {
     const label = v.display ?? v.name;
     return `<a class="tok-wikilink" data-wikilink="${escAttr(v.name)}">${escHtml(label)}</a>`;
   }
-  if (Array.isArray(v)) return v.map(cellHtml).join(", ");
+  if (Array.isArray(v)) return v.map((x) => cellHtml(x)).join(", ");
   if (typeof v === "boolean") return v ? "✓" : "✗";
   if (typeof v === "number") return String(v);
   if (v instanceof Date) return escHtml(toText(v));
@@ -541,13 +546,18 @@ function cellHtml(v: unknown): string {
   return renderInline(String(v));
 }
 
-export function renderDvResult(res: DvResult): string {
+export function renderDvResult(res: DvResult, format?: BadgeFormat | null): string {
   if (res.kind === "error") return `<div class="onyx-dv-error">${escHtml(res.message)}</div>`;
 
   if (res.kind === "table") {
     const head = `<thead><tr>${res.headers.map((h) => `<th>${escHtml(h)}</th>`).join("")}</tr></thead>`;
     const body = (rows: unknown[][]) =>
-      rows.map((r) => `<tr>${r.map((c) => `<td>${cellHtml(c)}</td>`).join("")}</tr>`).join("");
+      rows
+        .map(
+          (r) =>
+            `<tr>${r.map((c, i) => `<td>${cellHtml(c, res.headers[i], format)}</td>`).join("")}</tr>`
+        )
+        .join("");
     if (res.groups) {
       return res.groups
         .map(
@@ -608,7 +618,8 @@ export class DataviewWidget extends WidgetType {
   toDOM() {
     const el = document.createElement("div");
     el.className = "onyx-dataview onyx-rendered";
-    el.innerHTML = renderDvResult(runDql(this.source, getCachedPages(), this.currentPath));
+    const { dql, format } = splitDataviewSource(this.source);
+    el.innerHTML = renderDvResult(runDql(dql, getCachedPages(), this.currentPath), format);
     el.addEventListener("mousedown", (e) => {
       const input = (e.target as HTMLElement)?.closest?.(
         "input[data-task-path]"

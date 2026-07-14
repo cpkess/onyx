@@ -1,3 +1,5 @@
+import type { BadgeRule } from "./badges";
+
 export type DvType = "TABLE" | "LIST" | "TASK" | "CALENDAR";
 export type SourceKind = "all" | "folder" | "tag" | "links";
 
@@ -13,6 +15,7 @@ export interface DvSort {
 export interface DvColumn {
   expr: string;
   header?: string;
+  badges?: BadgeRule[]; // per-table conditional formatting (ignored by buildDql)
 }
 
 export interface QuerySpec {

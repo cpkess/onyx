@@ -666,6 +666,17 @@ body {
   background: color-mix(in srgb, currentColor 7%, transparent);
   font-weight: 600;
 }
+.onyx-dv-badge {
+  display: inline-block;
+  color: var(--dv-badge);
+  background: color-mix(in srgb, var(--dv-badge) 16%, transparent);
+  border-radius: 999px;
+  padding: 0.05em 0.6em;
+  font-size: 0.85em;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
 .onyx-dataview ul {
   margin: 0.2em 0;
   padding-left: 1.2em;
